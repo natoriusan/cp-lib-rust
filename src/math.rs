@@ -30,6 +30,36 @@ pub const fn make_factorials<const N: usize>(modulo: usize) -> [usize; N] {
     r
 }
 
+#[allow(dead_code)]
+pub const fn make_factorial_invs<const N: usize>(modulo: usize) -> [usize; N] {
+    const fn egcd(a: i64, b: i64) -> (i64, i64) {
+        if b == 0 {
+            (1, 0)
+        } else {
+            let (x, y) = egcd(b, a%b);
+            (y, x-a/b*y)
+        }
+    }
+
+    let mut fact = 1;
+    {
+        let mut i = 1;
+        while i < N {
+            fact = (fact*i) % modulo;
+            i += 1;
+        }
+    }
+    let inv = (egcd(fact as i64, modulo as i64).0 % modulo as i64 + modulo as i64) as usize % modulo;
+    assert!((fact*inv) % modulo == 1);
+    let mut r = [inv; N];
+    let mut i = N-1;
+    while i > 0 {
+        r[i-1] = (r[i] * i) % modulo;
+        i -= 1;
+    }
+    r
+}
+
 
 #[derive(Copy, Clone, Debug)]
 pub struct Rational(i64, i64);
