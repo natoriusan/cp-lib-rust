@@ -83,7 +83,7 @@ impl EulerTour for Vec<Vec<usize>> {
     }
 }
 
-#[allow(unused_imports)]
+#[allow(dead_code)]
 pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
@@ -105,7 +105,7 @@ pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(
     dist
 }
 
-#[allow(unused_imports)]
+#[allow(dead_code)]
 pub fn bfs01<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
@@ -132,7 +132,7 @@ pub fn bfs01<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl F
     dist
 }
 
-#[allow(unused_imports)]
+#[allow(dead_code)]
 pub fn dijkstra<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::BinaryHeap;
     use std::cmp::Reverse;
