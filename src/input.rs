@@ -106,6 +106,23 @@ pub fn write_u32(ptr: &mut *mut u8, mut n: u32) {
     }
 }
 
+// n != 0
+#[allow(dead_code)]
+#[inline(always)]
+pub fn write_u64(ptr: &mut *mut u8, mut n: u64) {
+    unsafe {
+        let length = n.ilog10() as usize + 1;
+        *ptr = ptr.add(length+1);
+        let mut p = ptr.sub(1);
+        while n > 0 {
+            p = p.sub(1);
+            let val = (n % 10) as usize;
+            n /= 10;
+            *p = val as u8 + b'0';
+        }
+    }
+}
+
 // そんなに速くない
 // https://atcoder.jp/contests/arc191/submissions/75606171
 #[allow(dead_code)]
