@@ -61,6 +61,124 @@ pub const fn make_factorial_invs<const N: usize>(modulo: usize) -> [usize; N] {
 }
 
 
+#[allow(dead_code)]
+pub struct DivisorLattice {
+    pub n: u64,
+    pub factors: std::collections::BTreeMap<u64, u32>,
+}
+
+impl DivisorLattice {
+    #[allow(dead_code)]
+    pub fn new(n: u64) -> Self {
+        let mut factors = std::collections::BTreeMap::new();
+        {
+            let mut n = n;
+            let mut i = 2;
+            while i*i <= n {
+                while n.is_multiple_of(i) {
+                    n /= i;
+                    *factors.entry(i).or_insert(0) += 1;
+                }
+                i += 1;
+            }
+            if n > 1 {
+                factors.insert(n, 1);
+            }
+        }
+
+        Self {
+            n,
+            factors,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_spf(n: u64, spf: &[usize]) -> Self {
+        let mut factors = std::collections::BTreeMap::new();
+        {
+            let mut n = n as usize;
+            while n > 1 {
+                *factors.entry(spf[n] as u64).or_insert(0) += 1;
+                n /= spf[n];
+            }
+        }
+
+        Self {
+            n,
+            factors,
+        }
+    }
+
+    #[allow(dead_code)]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.factors.values().map(|&i| i as usize+1).product()
+    }
+
+    #[allow(dead_code)]
+    pub fn lower_covers(&self, m: u64) -> impl Iterator<Item=u64> {
+        debug_assert!(self.n.is_multiple_of(m));
+        self.factors.keys().rev().filter(move |&&p| m.is_multiple_of(p)).map(move |&p| m/p)
+    }
+
+    #[allow(dead_code)]
+    pub fn upper_covers(&self, m: u64) -> impl Iterator<Item=u64> {
+        debug_assert!(self.n.is_multiple_of(m));
+        let div = self.n / m;
+        self.factors.keys().filter(move |&&p| div.is_multiple_of(p)).map(move |&p| m*p)
+    }
+
+    #[allow(dead_code)]
+    pub fn lower_set(&self, mut m: u64) -> Vec<u64> {
+        debug_assert!(self.n.is_multiple_of(m));
+        let mut r = vec![];
+
+        fn dfs(factors: &[(u64, u32)], r: &mut Vec<u64>, prod: u64, i: usize) {
+            if i == factors.len() {
+                r.push(prod);
+                return;
+            }
+
+            let mut pow = 1;
+            for _ in 0..=factors[i].1 {
+                dfs(factors, r, prod*pow, i+1);
+                pow = pow.wrapping_mul(factors[i].0);
+            }
+        }
+
+        let mut factors = vec![];
+        for &i in self.factors.keys() {
+            let mut count = 0;
+            while m.is_multiple_of(i) {
+                m /= i;
+                count += 1;
+            }
+
+            if count > 0 {
+                factors.push((i, count));
+            }
+        }
+
+        dfs(&factors, &mut r, 1, 0);
+        r.sort_unstable();
+
+        r
+    }
+
+    #[allow(dead_code)]
+    pub fn upper_set(&self, m: u64) -> Vec<u64> {
+        debug_assert!(self.n.is_multiple_of(m));
+
+        let mut r = self.lower_set(self.n/m);
+        for i in &mut r {
+            *i *= m;
+        }
+
+        r
+    }
+}
+
+
 #[derive(Copy, Clone, Debug)]
 pub struct Rational(i64, i64);
 

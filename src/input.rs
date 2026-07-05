@@ -89,6 +89,20 @@ pub fn read_u32(ptr: &mut *const u8) -> u32 {
     }
 }
 
+#[allow(dead_code)]
+#[inline(always)]
+#[cfg(target_arch = "x86_64")]
+pub fn read_u32_small(ptr: &mut *const u8) -> u32 {
+    let bytes = unsafe { (*ptr as *const u64).read_unaligned().to_le() };
+    let whitespace = bytes.wrapping_sub(0x3030303030303030) & 0x8080808080808080;
+
+    let length = (unsafe { core::arch::x86_64::_tzcnt_u64(whitespace) } >> 3) as usize;
+    unsafe {
+        *ptr = ptr.add(length+1);
+    }
+    parse_digits_u64(bytes << (64-(length<<3)))
+}
+
 // n != 0
 #[allow(dead_code)]
 #[inline(always)]
