@@ -176,7 +176,8 @@ impl DivisorLattice {
 
         r
     }
-    
+
+    #[allow(dead_code)]
     pub fn euler_phi(&self, m: u64) -> u64 {
         debug_assert!(self.n.is_multiple_of(m));
         
