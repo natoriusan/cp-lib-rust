@@ -176,6 +176,37 @@ impl DivisorLattice {
 
         r
     }
+    
+    pub fn euler_phi(&self, m: u64) -> u64 {
+        debug_assert!(self.n.is_multiple_of(m));
+        
+        let mut r = m;
+        for &p in self.factors.keys() {
+            if m.is_multiple_of(p) {
+                r -= r/p;
+            }
+        }
+        
+        r
+    }
+    
+    #[allow(dead_code)]
+    pub fn mobius(&self, m: u64) -> i32 {
+        debug_assert!(self.n.is_multiple_of(m));
+        
+        let mut r = 1;
+        for &p in self.factors.keys() {
+            if m.is_multiple_of(p) {
+                if (m/p).is_multiple_of(p) {
+                    return 0;
+                }
+                
+                r = -r;
+            }
+        }
+        
+        r
+    }
 }
 
 
