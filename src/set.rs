@@ -1,8 +1,6 @@
 // BTreeMapをmultisetのように扱うときの補助用の関数
 pub trait MultiSet<T> {
-    #[allow(dead_code)]
     fn insert_multiset(&mut self, value: T);
-    #[allow(dead_code)]
     fn remove_multiset(&mut self, value: &T);
 }
 
@@ -44,7 +42,6 @@ pub struct TopK<T: TopKOperation> {
 }
 
 impl<T: TopKOperation> TopK<T> {
-    #[allow(dead_code)]
     pub fn new(k: usize) -> Self {
         TopK {
             top: std::collections::BTreeMap::new(),
@@ -56,14 +53,12 @@ impl<T: TopKOperation> TopK<T> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn insert(&mut self, value: T::V) {
         T::data_insert(&mut self.other_data, &value);
         self.other.insert_multiset(value);
         self.balance();
     }
 
-    #[allow(dead_code)]
     pub fn remove(&mut self, value: T::V) {
         if self.other.contains_key(&value) {
             T::data_remove(&mut self.other_data, &value);
@@ -76,7 +71,6 @@ impl<T: TopKOperation> TopK<T> {
         self.balance();
     }
 
-    #[allow(dead_code)]
     pub fn balance(&mut self) {
         while self.top_count > self.k {
             let val = self.top.first_key_value().unwrap().0.clone();
@@ -114,7 +108,6 @@ impl<T: TopKOperation> TopK<T> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn update_k(&mut self, k: usize) {
         self.k = k;
         self.balance();

@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 pub fn factorial_mod<T: ac_library::modint::ModIntBase>(max: usize) -> (Vec<T>, Vec<T>) {
     use itertools::Itertools;
 
@@ -19,7 +18,6 @@ pub fn factorial_mod<T: ac_library::modint::ModIntBase>(max: usize) -> (Vec<T>, 
     (factorials, factorial_invs)
 }
 
-#[allow(dead_code)]
 pub const fn make_factorials<const N: usize>(modulo: usize) -> [usize; N] {
     let mut r = [1; N];
     let mut i = 1;
@@ -30,7 +28,6 @@ pub const fn make_factorials<const N: usize>(modulo: usize) -> [usize; N] {
     r
 }
 
-#[allow(dead_code)]
 pub const fn make_factorial_invs<const N: usize>(modulo: usize) -> [usize; N] {
     const fn egcd(a: i64, b: i64) -> (i64, i64) {
         if b == 0 {
@@ -61,8 +58,7 @@ pub const fn make_factorial_invs<const N: usize>(modulo: usize) -> [usize; N] {
 }
 
 
-#[allow(dead_code)]
-fn poly_sum(f: impl Fn(i64) -> i64, deg: usize, range: impl std::ops::RangeBounds<i64>) -> i64 {
+pub fn poly_sum(f: impl Fn(i64) -> i64, deg: usize, range: impl std::ops::RangeBounds<i64>) -> i64 {
     use std::ops::Bound::*;
     let l =
         match range.start_bound() {
@@ -101,8 +97,7 @@ fn poly_sum(f: impl Fn(i64) -> i64, deg: usize, range: impl std::ops::RangeBound
     ret
 }
 
-#[allow(dead_code)]
-fn poly_sum_mod<T: ac_library::modint::ModIntBase>(f: impl Fn(T) -> T, deg: usize, range: impl std::ops::RangeBounds<T>) -> T {
+pub fn poly_sum_mod<T: ac_library::modint::ModIntBase>(f: impl Fn(T) -> T, deg: usize, range: impl std::ops::RangeBounds<T>) -> T {
     use std::ops::Bound::*;
     let l =
         match range.start_bound() {
@@ -138,14 +133,12 @@ fn poly_sum_mod<T: ac_library::modint::ModIntBase>(f: impl Fn(T) -> T, deg: usiz
 }
 
 
-#[allow(dead_code)]
 pub struct DivisorLattice {
     pub n: u64,
     pub factors: std::collections::BTreeMap<u64, u32>,
 }
 
 impl DivisorLattice {
-    #[allow(dead_code)]
     pub fn new(n: u64) -> Self {
         let mut factors = std::collections::BTreeMap::new();
         {
@@ -169,7 +162,6 @@ impl DivisorLattice {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_spf(n: u64, spf: &[usize]) -> Self {
         let mut factors = std::collections::BTreeMap::new();
         {
@@ -186,26 +178,22 @@ impl DivisorLattice {
         }
     }
 
-    #[allow(dead_code)]
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.factors.values().map(|&i| i as usize+1).product()
     }
 
-    #[allow(dead_code)]
     pub fn lower_covers(&self, m: u64) -> impl Iterator<Item=u64> {
         debug_assert!(self.n.is_multiple_of(m));
         self.factors.keys().rev().filter(move |&&p| m.is_multiple_of(p)).map(move |&p| m/p)
     }
 
-    #[allow(dead_code)]
     pub fn upper_covers(&self, m: u64) -> impl Iterator<Item=u64> {
         debug_assert!(self.n.is_multiple_of(m));
         let div = self.n / m;
         self.factors.keys().filter(move |&&p| div.is_multiple_of(p)).map(move |&p| m*p)
     }
 
-    #[allow(dead_code)]
     pub fn lower_set(&self, mut m: u64) -> Vec<u64> {
         debug_assert!(self.n.is_multiple_of(m));
         let mut r = vec![];
@@ -242,7 +230,6 @@ impl DivisorLattice {
         r
     }
 
-    #[allow(dead_code)]
     pub fn upper_set(&self, m: u64) -> Vec<u64> {
         debug_assert!(self.n.is_multiple_of(m));
 
@@ -254,7 +241,6 @@ impl DivisorLattice {
         r
     }
 
-    #[allow(dead_code)]
     pub fn euler_phi(&self, m: u64) -> u64 {
         debug_assert!(self.n.is_multiple_of(m));
         
@@ -268,7 +254,6 @@ impl DivisorLattice {
         r
     }
     
-    #[allow(dead_code)]
     pub fn mobius(&self, m: u64) -> i32 {
         debug_assert!(self.n.is_multiple_of(m));
         
@@ -311,7 +296,6 @@ impl Ord for Rational {
     }
 }
 
-#[allow(dead_code)]
 /// (-3/2 π, 1/2 π]の偏角で順序づけられた点
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Slope {
@@ -319,14 +303,12 @@ pub enum Slope {
     Infinity,
 }
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ArgPoint {
     Left(Slope),
     Right(Slope),
 }
 
-#[allow(dead_code)]
 impl ArgPoint {
     pub fn new(x: i64, y: i64) -> Self {
         use Slope::*;

@@ -1,6 +1,5 @@
 // [0, 1<<size)のSegment Tree(1-indexedの内部実装)のiが寄与するセグメントのindex一覧 (set用)
 // https://atcoder.jp/contests/abc339/submissions/71935783
-#[allow(dead_code)]
 pub fn included_segments(size: usize, mut i: usize) -> Vec<usize> {
     i += 1 << size;
     let mut segments = vec![];
@@ -14,7 +13,6 @@ pub fn included_segments(size: usize, mut i: usize) -> Vec<usize> {
 
 // [0, 1<<size)のSegment Tree(1-indexedの内部実装)の[l, r)のセグメントによる表現 (prod用)
 // https://atcoder.jp/contests/abc339/submissions/71935783
-#[allow(dead_code)]
 pub fn split_segments(size: usize, mut l: usize, mut r: usize) -> Vec<usize> {
     l += 1 << size;
     r += 1 << size;
@@ -62,7 +60,6 @@ impl<M: ac_library::Monoid> Clone for PersistentSegtree<M> {
 }
 
 impl<M: ac_library::Monoid> PersistentSegtree<M> {
-    #[allow(dead_code)]
     pub fn new(n: usize) -> Self {
         fn make_tree<M: ac_library::Monoid>(nodes: &mut Vec<Node<M::S>>, l: usize, r: usize) -> usize {
             let mut node = Node {
@@ -90,7 +87,6 @@ impl<M: ac_library::Monoid> PersistentSegtree<M> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn get(&self, p: usize) -> M::S {
         fn get_tree<M: ac_library::Monoid>(nodes: &[Node<M::S>], p: usize, i: usize, l: usize, r: usize) -> M::S {
             let node = &nodes[i];
@@ -109,7 +105,6 @@ impl<M: ac_library::Monoid> PersistentSegtree<M> {
         get_tree::<M>(&self.nodes.borrow(), p, self.root, 0, self.n)
     }
 
-    #[allow(dead_code)]
     #[must_use]
     pub fn set(&self, p: usize, x: M::S) -> Self {
         fn set_tree<M: ac_library::Monoid>(nodes: &mut Vec<Node<M::S>>, p: usize, x: M::S, i: usize, l: usize, r: usize) -> usize {
@@ -144,7 +139,6 @@ impl<M: ac_library::Monoid> PersistentSegtree<M> {
         }
     }
 
-    #[allow(dead_code)]
     pub fn prod<R: std::ops::RangeBounds<usize>>(&self, range: R) -> M::S {
         fn prod_tree<M: ac_library::Monoid>(nodes: &[Node<M::S>], lb: usize, rb: usize, i: usize, l: usize, r: usize) -> M::S {
             let node = &nodes[i];

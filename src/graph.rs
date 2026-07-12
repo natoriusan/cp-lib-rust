@@ -1,4 +1,3 @@
-#[allow(dead_code)]
 pub trait ConstructGraph<T> {
     /// Constructs an undirected graph from Vec of 0-indexed edge pairs
     fn graph(&self, size: usize) -> Vec<Vec<T>>;
@@ -54,7 +53,6 @@ impl<T: Copy> ConstructGraph<(usize, T)> for Vec<(usize, usize, T)> {
 }
 
 
-#[allow(dead_code)]
 pub trait EulerTour {
     fn euler_tour(&self) -> Vec<(usize, usize)>;
 }
@@ -83,7 +81,6 @@ impl EulerTour for Vec<Vec<usize>> {
     }
 }
 
-#[allow(dead_code)]
 pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
@@ -105,7 +102,6 @@ pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(
     dist
 }
 
-#[allow(dead_code)]
 pub fn bfs01<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
@@ -132,7 +128,6 @@ pub fn bfs01<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl F
     dist
 }
 
-#[allow(dead_code)]
 pub fn dijkstra<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::BinaryHeap;
     use std::cmp::Reverse;

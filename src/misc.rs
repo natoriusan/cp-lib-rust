@@ -1,5 +1,4 @@
 const DIJ: [(usize, usize); 4] = [(1, 0), (1usize.wrapping_neg(), 0), (0, 1), (0, 1usize.wrapping_neg())];
-#[allow(dead_code)]
 #[inline(always)]
 pub fn neighborhood4(h: usize, w: usize, i: usize, j: usize) -> impl Iterator<Item = (usize, usize)> {
     DIJ.iter().filter_map(move |&(di, dj)| {
@@ -14,7 +13,6 @@ pub fn neighborhood4(h: usize, w: usize, i: usize, j: usize) -> impl Iterator<It
 }
 
 const DIJ8: [(usize, usize); 8] = [(1usize.wrapping_neg(), 1usize.wrapping_neg()), (1usize.wrapping_neg(), 0), (1usize.wrapping_neg(), 1), (0, 1usize.wrapping_neg()), (0, 1), (1, 1usize.wrapping_neg()), (1, 0), (1, 1)];
-#[allow(dead_code)]
 #[inline(always)]
 pub fn neighborhood8(h: usize, w: usize, i: usize, j: usize) -> impl Iterator<Item = (usize, usize)> {
     DIJ8.iter().filter_map(move |&(di, dj)| {
@@ -29,7 +27,6 @@ pub fn neighborhood8(h: usize, w: usize, i: usize, j: usize) -> impl Iterator<It
 }
 
 
-#[allow(dead_code)]
 pub trait ChMaxMin<T> {
     fn chmax(&mut self, val: T);
     fn chmin(&mut self, val: T);

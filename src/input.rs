@@ -3,7 +3,6 @@ unsafe extern "C" {
     fn mmap(addr: *mut u8, length: usize, prot: i32, flags: i32, fd: i32, offset: isize) -> *mut u8;
 }
 
-#[allow(dead_code)]
 pub fn mmap_input() -> *const u8 {
     let mut stat_buf = [0u64; 18];
     unsafe {
@@ -14,7 +13,6 @@ pub fn mmap_input() -> *const u8 {
     }
 }
 
-#[allow(dead_code)]
 pub fn mmap_input_mut() -> *mut u8 {
     let mut stat_buf = [0u64; 18];
     unsafe {
@@ -26,7 +24,6 @@ pub fn mmap_input_mut() -> *mut u8 {
 }
 
 
-#[allow(dead_code)]
 #[inline(always)]
 pub fn parse_digits_u64(mut x: u64) -> u32 {
     x &= 0x0F0F0F0F0F0F0F0F;
@@ -38,7 +35,6 @@ pub fn parse_digits_u64(mut x: u64) -> u32 {
     x as u32
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 pub fn parse_digits_u32(mut x: u32) -> u32 {
     x &= 0x0F0F0F0F;
@@ -48,7 +44,6 @@ pub fn parse_digits_u32(mut x: u32) -> u32 {
     x
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 pub fn parse_digits_u16(mut x: u16) -> u16 {
     x &= 0x0F0F;
@@ -56,7 +51,6 @@ pub fn parse_digits_u16(mut x: u16) -> u16 {
     x
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 pub fn read_u32(ptr: &mut *const u8) -> u32 {
@@ -89,7 +83,6 @@ pub fn read_u32(ptr: &mut *const u8) -> u32 {
     }
 }
 
-#[allow(dead_code)]
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 pub fn read_u32_small(ptr: &mut *const u8) -> u32 {
@@ -104,7 +97,6 @@ pub fn read_u32_small(ptr: &mut *const u8) -> u32 {
 }
 
 // n != 0
-#[allow(dead_code)]
 #[inline(always)]
 pub fn write_u32(ptr: &mut *mut u8, mut n: u32) {
     unsafe {
@@ -121,7 +113,6 @@ pub fn write_u32(ptr: &mut *mut u8, mut n: u32) {
 }
 
 // n != 0
-#[allow(dead_code)]
 #[inline(always)]
 pub fn write_u64(ptr: &mut *mut u8, mut n: u64) {
     unsafe {
@@ -139,7 +130,6 @@ pub fn write_u64(ptr: &mut *mut u8, mut n: u64) {
 
 // そんなに速くない
 // https://atcoder.jp/contests/arc191/submissions/75606171
-#[allow(dead_code)]
 #[inline(always)]
 #[cfg(target_arch = "x86_64")]
 pub fn write_u32_simd(ptr: &mut *mut u8, n: u32) {

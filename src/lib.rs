@@ -5,7 +5,6 @@ pub mod misc;
 pub mod segtree;
 pub mod set;
 
-#[allow(unused_macros)]
 #[macro_export]
 macro_rules! yes_no {
     ($b:expr) => {
@@ -13,7 +12,6 @@ macro_rules! yes_no {
     };
 }
 
-#[allow(unused_macros)]
 #[macro_export]
 macro_rules! read_unsigned {
     ($ptr:expr, $t:ty) => {
