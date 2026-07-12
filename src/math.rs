@@ -62,6 +62,83 @@ pub const fn make_factorial_invs<const N: usize>(modulo: usize) -> [usize; N] {
 
 
 #[allow(dead_code)]
+fn poly_sum(f: impl Fn(i64) -> i64, deg: usize, range: impl std::ops::RangeBounds<i64>) -> i64 {
+    use std::ops::Bound::*;
+    let l =
+        match range.start_bound() {
+            Included(&l) => l,
+            Excluded(&l) => l+1,
+            _ => unreachable!(),
+        };
+    let r =
+        match range.end_bound() {
+            Included(&r) => r+1,
+            Excluded(&r) => r,
+            _ => unreachable!(),
+        };
+
+    if l >= r {
+        return 0;
+    }
+
+    let mut diff = vec![0; deg+2];
+    for i in 0..deg+1 {
+        diff[i+1] = diff[i] + f(l+i as i64);
+    }
+
+    let mut ret = diff[0];
+    let mut c = 1;
+    for i in 1..=deg+1 {
+        for j in 0..deg+2-i {
+            diff[j] = diff[j+1]-diff[j];
+        }
+
+        c *= r-l+1 - i as i64;
+        c /= i as i64;
+        ret += c * diff[0];
+    }
+
+    ret
+}
+
+#[allow(dead_code)]
+fn poly_sum_mod<T: ac_library::modint::ModIntBase>(f: impl Fn(T) -> T, deg: usize, range: impl std::ops::RangeBounds<T>) -> T {
+    use std::ops::Bound::*;
+    let l =
+        match range.start_bound() {
+            Included(&l) => l,
+            Excluded(&l) => l+T::new(1u32),
+            _ => unreachable!(),
+        };
+    let r =
+        match range.end_bound() {
+            Included(&r) => r+T::new(1u32),
+            Excluded(&r) => r,
+            _ => unreachable!(),
+        };
+
+    let mut diff = vec![T::new(0u32); deg+2];
+    for i in 0..deg+1 {
+        diff[i+1] = diff[i] + f(l+T::new(i));
+    }
+
+    let mut ret = diff[0];
+    let mut c = T::new(1u32);
+    for i in 1..=deg+1 {
+        for j in 0..deg+2-i {
+            diff[j] = diff[j+1]-diff[j];
+        }
+
+        c *= r - l + T::new(1u32) - T::new(i);
+        c /= T::new(i);
+        ret += c * diff[0];
+    }
+
+    ret
+}
+
+
+#[allow(dead_code)]
 pub struct DivisorLattice {
     pub n: u64,
     pub factors: std::collections::BTreeMap<u64, u32>,
