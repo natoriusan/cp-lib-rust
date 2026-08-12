@@ -1,6 +1,6 @@
 // [0, 1<<size)のSegment Tree(1-indexedの内部実装)のiが寄与するセグメントのindex一覧 (set用)
-// https://atcoder.jp/contests/abc339/submissions/71935783
-pub fn included_segments(size: usize, mut i: usize) -> Vec<usize> {
+// https://atcoder.jp/contests/abc339/submissions/71935783 (名前変更前)
+pub fn included_segments_pow(size: usize, mut i: usize) -> Vec<usize> {
     i += 1 << size;
     let mut segments = vec![];
     while i > 0 {
@@ -12,8 +12,9 @@ pub fn included_segments(size: usize, mut i: usize) -> Vec<usize> {
 }
 
 // [0, 1<<size)のSegment Tree(1-indexedの内部実装)の[l, r)のセグメントによる表現 (prod用)
-// https://atcoder.jp/contests/abc339/submissions/71935783
-pub fn split_segments(size: usize, mut l: usize, mut r: usize) -> Vec<usize> {
+// 可換専用
+// https://atcoder.jp/contests/abc339/submissions/71935783 (名前変更前)
+pub fn split_segments_pow(size: usize, mut l: usize, mut r: usize) -> Vec<usize> {
     l += 1 << size;
     r += 1 << size;
     let mut segments = vec![];
@@ -31,6 +32,48 @@ pub fn split_segments(size: usize, mut l: usize, mut r: usize) -> Vec<usize> {
     }
 
     segments
+}
+
+// included_segments_powの2冪でなくてもいいバージョン
+pub fn included_segments(n: usize, i: usize) -> impl Iterator<Item=usize> {
+    std::iter::successors(Some(n+i), |&j| (j >= 2).then_some(j>>1))
+}
+
+// split_segments_powの2冪でなくてもいいバージョン
+pub fn split_segments(n: usize, mut l: usize, mut r: usize) -> impl Iterator<Item=usize> {
+    l += n;
+    r += n;
+    let r_orig = r;
+    let mut count = 0;
+    let mut left = true;
+    
+    std::iter::from_fn(move || {
+        if left {
+            while l < r {
+                count += 1;
+                r >>= 1;
+                if l % 2 == 1 {
+                    let idx = l;
+                    l += 1;
+                    l >>= 1;
+                    return Some(idx);
+                }
+                l >>= 1;
+            }
+            
+            left = false;
+        }
+
+        while count > 0 {
+            count -= 1;
+            let r = r_orig >> count;
+            if r % 2 == 1 {
+                return Some(r-1);
+            }
+        }
+        
+        None
+    })
 }
 
 
