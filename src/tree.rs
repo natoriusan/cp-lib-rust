@@ -29,14 +29,31 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         self.nodes.len()
     }
 
-    pub fn set(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, value: M::S) {
-        self.set_rec(key, value, 0);
+    pub fn get(&self, mut key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>) -> M::S {
+        use bitvec::field::BitField;
+        let mut idx = 0;
+        loop {
+            if key.is_empty() { break self.nodes[idx].value.clone(); }
+
+            let child_idx = self.nodes[idx].children[key[0] as usize];
+            if child_idx == u32::MAX { break M::identity(); }
+
+            let child = &self.nodes[child_idx as usize];
+            if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix { break M::identity(); }
+
+            idx = child_idx as usize;
+            key = &key[child.len as usize..];
+        }
     }
 
-    fn set_rec(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, value: M::S, idx: usize) {
+    pub fn modify(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl FnOnce(&M::S) -> M::S) {
+        self.modify_rec(key, f, 0);
+    }
+
+    fn modify_rec(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
         use bitvec::field::BitField;
         if key.is_empty() {
-            self.nodes[idx].value = value;
+            self.nodes[idx].value = f(&self.nodes[idx].value);
         } else {
             let size = key.len().min(64);
             let chunk = key[..size].load_be::<u64>() << (64-size);
@@ -57,7 +74,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             let len = ((chunk ^ child.prefix).leading_zeros() as u8).min(child.len).min(size as u8);
 
             if len == child.len {
-                self.set_rec(&key[len as usize..], value, child_idx);
+                self.modify_rec(&key[len as usize..], f, child_idx);
             } else {
                 self.nodes[idx].children[key[0] as usize] = self.len() as u32;
                 self.nodes[child_idx].prefix <<= len;
@@ -70,7 +87,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
                     aggregate: M::identity(),
                 });
 
-                self.set_rec(&key[len as usize..], value, self.len()-1);
+                self.modify_rec(&key[len as usize..], f, self.len()-1);
 
             }
         }
@@ -84,25 +101,8 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         self.nodes[idx].aggregate = M::binary_operation(&self.nodes[idx].value.clone(), &agg);
     }
 
-    pub fn get(&self, mut key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>) -> M::S {
-        use bitvec::field::BitField;
-        let mut idx = 0;
-        loop {
-            if key.is_empty() { break self.nodes[idx].value.clone(); }
-
-            let child_idx = self.nodes[idx].children[key[0] as usize];
-            if child_idx == u32::MAX { break M::identity(); }
-
-            let child = &self.nodes[child_idx as usize];
-            if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix { break M::identity(); }
-
-            idx = child_idx as usize;
-            key = &key[child.len as usize..];
-        }
-    }
-
-    pub fn modify(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl FnOnce(M::S) -> M::S) {
-        self.set(key, f(self.get(key)))
+    pub fn set(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, value: M::S) {
+        self.modify(key, |_| value);
     }
 
     pub fn prod<'a, R: std::ops::RangeBounds<&'a bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>>>(&self, range: R) -> M::S {
