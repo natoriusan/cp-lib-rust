@@ -4,6 +4,7 @@ pub mod math;
 pub mod misc;
 pub mod segtree;
 pub mod set;
+pub mod tree;
 
 #[macro_export]
 macro_rules! yes_no {
