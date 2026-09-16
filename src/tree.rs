@@ -1,3 +1,4 @@
+// パス圧縮付きのBinaryTrie (https://atcoder.jp/contests/abc475/submissions/79302686)
 struct BinaryRadixTreeNode<M: ac_library::Monoid> {
     prefix: u64,
     len: u8,
@@ -304,5 +305,76 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
 impl<M: ac_library::Monoid> Default for BinaryRadixTree<M> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+// 動的セグ木のような使い方: https://atcoder.jp/contests/abc403/submissions/79303011
+pub struct RadixTree<M: ac_library::Monoid> {
+    tree: BinaryRadixTree<M>,
+}
+
+impl<M: ac_library::Monoid> RadixTree<M> {
+    fn create_bitvec(it: impl IntoIterator<Item=usize>) -> bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0> {
+        bitvec::prelude::BitVec::from_iter(it)
+    }
+    
+    pub fn new() -> Self {
+        Self {
+            tree: BinaryRadixTree::new(),
+        }
+    }
+    
+    pub fn get(&self, key: impl IntoIterator<Item=usize>) -> M::S {
+        self.tree.get(&Self::create_bitvec(key))
+    }
+    
+    pub fn modify(&mut self, key: impl IntoIterator<Item=usize>, f: impl FnOnce(&M::S) -> M::S) {
+        self.tree.modify(&Self::create_bitvec(key), f);
+    }
+
+    pub fn set(&mut self, key: impl IntoIterator<Item=usize>, value: M::S) {
+        self.tree.set(&Self::create_bitvec(key), value);
+    }
+
+    pub fn prod<'a, I: IntoIterator<Item=usize> + Clone + 'a, R: std::ops::RangeBounds<I>>(&self, range: R) -> M::S {
+        use std::ops::Bound::*;
+        let start_vec;
+        let start = match range.start_bound().cloned() {
+            Included(it) => {
+                start_vec = Self::create_bitvec(it);
+                Included(start_vec.as_bitslice())
+            },
+            Excluded(it) => {
+                start_vec = Self::create_bitvec(it);
+                Excluded(start_vec.as_bitslice())
+            },
+            Unbounded => Unbounded,
+        };
+        let end_vec;
+        let end = match range.end_bound().cloned() {
+            Included(it) => {
+                end_vec = Self::create_bitvec(it);
+                Included(end_vec.as_bitslice())
+            },
+            Excluded(it) => {
+                end_vec = Self::create_bitvec(it);
+                Excluded(end_vec.as_bitslice())
+            },
+            Unbounded => Unbounded,
+        };
+        self.tree.prod((start, end))
+    }
+
+    pub fn max_right(&self, left: impl IntoIterator<Item=usize>, f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
+        self.tree.max_right(&Self::create_bitvec(left), f).map(|v| v.into_vec())
+    }
+}
+
+impl<M: ac_library::Monoid> Default for RadixTree<M> {
+    fn default() -> Self {
+        Self {
+            tree: Default::default(),
+        }
     }
 }
