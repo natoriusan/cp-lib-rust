@@ -35,14 +35,17 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         loop {
             if key.is_empty() { break self.nodes[idx].value.clone(); }
 
-            let child_idx = self.nodes[idx].children[key[0] as usize];
-            if child_idx == u32::MAX { break M::identity(); }
+            let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
+            if let Some(child) = self.nodes.get(child_idx) {
+                if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix {
+                    break M::identity();
+                }
 
-            let child = &self.nodes[child_idx as usize];
-            if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix { break M::identity(); }
-
-            idx = child_idx as usize;
-            key = &key[child.len as usize..];
+                idx = child_idx;
+                key = &key[child.len as usize..];
+            } else {
+                break M::identity();
+            }
         }
     }
 
@@ -77,28 +80,30 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
                 self.modify_rec(&key[len as usize..], f, child_idx);
             } else {
                 self.nodes[idx].children[key[0] as usize] = self.len() as u32;
-                self.nodes[child_idx].prefix <<= len;
-                self.nodes[child_idx].len -= len;
+                let child = &mut self.nodes[child_idx];
+                child.prefix <<= len;
+                child.len -= len;
+                let prefix = child.prefix;
                 self.nodes.push(BinaryRadixTreeNode {
                     prefix: chunk >> (64-len) << (64-len),
                     len,
-                    children: if self.nodes[child_idx].prefix >> 63 == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
+                    children: if prefix >> 63 == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
                     value: M::identity(),
                     aggregate: M::identity(),
                 });
 
                 self.modify_rec(&key[len as usize..], f, self.len()-1);
-
             }
         }
 
         let mut agg = M::identity();
         for i in self.nodes[idx].children {
-            if i != u32::MAX {
-                agg = M::binary_operation(&agg, &self.nodes[i as usize].aggregate);
+            if let Some(c) = self.nodes.get(i as usize) {
+                agg = M::binary_operation(&agg, &c.aggregate);
             }
         }
-        self.nodes[idx].aggregate = M::binary_operation(&self.nodes[idx].value.clone(), &agg);
+        let node = &mut self.nodes[idx];
+        node.aggregate = M::binary_operation(&node.value, &agg);
     }
 
     pub fn set(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, value: M::S) {
@@ -134,9 +139,8 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             };
 
         for i in 0..2 {
-            let child_idx = self.nodes[idx].children[i];
-            if child_idx != u32::MAX {
-                let child = &self.nodes[child_idx as usize];
+            let child_idx = self.nodes[idx].children[i] as usize;
+            if let Some(child) = self.nodes.get(child_idx) {
                 let left_key = match left {
                     Included(key) => Some(key),
                     Excluded(key) => Some(key),
@@ -221,7 +225,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
                         Unbounded
                     };
 
-                r = M::binary_operation(&r, &self.prod_rec(new_left, new_right, child_idx as usize));
+                r = M::binary_operation(&r, &self.prod_rec(new_left, new_right, child_idx));
             }
         }
 
@@ -259,25 +263,24 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         }
 
         for i in 0..2 {
-            let child_idx = node.children[i];
-            if child_idx != u32::MAX {
-                let child = &self.nodes[child_idx as usize];
+            let child_idx = node.children[i] as usize;
+            if let Some(child) = self.nodes.get(child_idx) {
                 let v =
                     if left.is_empty() {
-                        self.max_right_rec(left, f, child_idx as usize, acc)
+                        self.max_right_rec(left, f, child_idx, acc)
                     } else if left.len() < child.len as usize {
                         let chunk = left.load_be::<u64>() << (64-left.len());
                         if chunk <= child.prefix {
-                            self.max_right_rec(BitSlice::empty(), f, child_idx as usize, acc)
+                            self.max_right_rec(BitSlice::empty(), f, child_idx, acc)
                         } else {
                             continue;
                         }
                     } else {
                         let chunk = left[..child.len as usize].load_be::<u64>() << (64-child.len);
                         if chunk < child.prefix {
-                            self.max_right_rec(BitSlice::empty(), f, child_idx as usize, acc)
+                            self.max_right_rec(BitSlice::empty(), f, child_idx, acc)
                         } else if chunk == child.prefix {
-                            self.max_right_rec(&left[child.len as usize..], f, child_idx as usize, acc)
+                            self.max_right_rec(&left[child.len as usize..], f, child_idx, acc)
                         } else {
                             continue;
                         }
