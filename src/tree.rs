@@ -315,59 +315,49 @@ pub struct RadixTree<M: ac_library::Monoid> {
 }
 
 impl<M: ac_library::Monoid> RadixTree<M> {
-    fn create_bitvec(it: impl IntoIterator<Item=usize>) -> bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0> {
-        bitvec::prelude::BitVec::from_iter(it)
-    }
-    
     pub fn new() -> Self {
         Self {
             tree: BinaryRadixTree::new(),
         }
     }
     
-    pub fn get(&self, key: impl IntoIterator<Item=usize>) -> M::S {
-        self.tree.get(&Self::create_bitvec(key))
+    pub fn get(&self, key: &[usize]) -> M::S {
+        self.tree.get(bitvec::prelude::BitSlice::from_slice(key))
     }
     
-    pub fn modify(&mut self, key: impl IntoIterator<Item=usize>, f: impl FnOnce(&M::S) -> M::S) {
-        self.tree.modify(&Self::create_bitvec(key), f);
+    pub fn modify(&mut self, key: &[usize], f: impl FnOnce(&M::S) -> M::S) {
+        self.tree.modify(bitvec::prelude::BitSlice::from_slice(key), f);
     }
 
-    pub fn set(&mut self, key: impl IntoIterator<Item=usize>, value: M::S) {
-        self.tree.set(&Self::create_bitvec(key), value);
+    pub fn set(&mut self, key: &[usize], value: M::S) {
+        self.tree.set(bitvec::prelude::BitSlice::from_slice(key), value);
     }
 
-    pub fn prod<'a, I: IntoIterator<Item=usize> + Clone + 'a, R: std::ops::RangeBounds<I>>(&self, range: R) -> M::S {
+    pub fn prod<'a, R: std::ops::RangeBounds<&'a [usize]>>(&self, range: R) -> M::S {
         use std::ops::Bound::*;
-        let start_vec;
         let start = match range.start_bound().cloned() {
             Included(it) => {
-                start_vec = Self::create_bitvec(it);
-                Included(start_vec.as_bitslice())
+                Included(bitvec::prelude::BitSlice::from_slice(it))
             },
             Excluded(it) => {
-                start_vec = Self::create_bitvec(it);
-                Excluded(start_vec.as_bitslice())
+                Excluded(bitvec::prelude::BitSlice::from_slice(it))
             },
             Unbounded => Unbounded,
         };
-        let end_vec;
         let end = match range.end_bound().cloned() {
             Included(it) => {
-                end_vec = Self::create_bitvec(it);
-                Included(end_vec.as_bitslice())
+                Included(bitvec::prelude::BitSlice::from_slice(it))
             },
             Excluded(it) => {
-                end_vec = Self::create_bitvec(it);
-                Excluded(end_vec.as_bitslice())
+                Excluded(bitvec::prelude::BitSlice::from_slice(it))
             },
             Unbounded => Unbounded,
         };
         self.tree.prod((start, end))
     }
 
-    pub fn max_right(&self, left: impl IntoIterator<Item=usize>, f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
-        self.tree.max_right(&Self::create_bitvec(left), f).map(|v| v.into_vec())
+    pub fn max_right(&self, left: &[usize], f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
+        self.tree.max_right(bitvec::prelude::BitSlice::from_slice(left), f).map(|v| v.into_vec())
     }
 }
 
