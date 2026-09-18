@@ -1,5 +1,4 @@
 // パス圧縮付きのBinaryTrie (https://atcoder.jp/contests/abc475/submissions/79302686)
-#[derive(Clone)]
 struct BinaryRadixTreeNode<M: ac_library::Monoid> {
     prefix: u64,
     len: u8,
@@ -8,7 +7,18 @@ struct BinaryRadixTreeNode<M: ac_library::Monoid> {
     aggregate: M::S
 }
 
-#[derive(Clone)]
+impl<M: ac_library::Monoid> Clone for BinaryRadixTreeNode<M> {
+    fn clone(&self) -> Self {
+        Self {
+            prefix: self.prefix,
+            len: self.len,
+            children: self.children,
+            value: self.value.clone(),
+            aggregate: self.aggregate.clone(),
+        }
+    }
+}
+
 pub struct BinaryRadixTree<M: ac_library::Monoid> {
     nodes: Vec<BinaryRadixTreeNode<M>>
 }
@@ -52,7 +62,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         }
     }
     
-    pub fn update(&mut self, idx: usize) {
+    fn update(&mut self, idx: usize) {
         let mut agg = M::identity();
         for i in self.nodes[idx].children {
             if let Some(c) = self.nodes.get(i as usize) {
@@ -338,9 +348,16 @@ impl<M: ac_library::Monoid> Default for BinaryRadixTree<M> {
     }
 }
 
+impl<M: ac_library::Monoid> Clone for BinaryRadixTree<M> {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+        }
+    }
+}
+
 
 // 動的セグ木のような使い方: https://atcoder.jp/contests/abc403/submissions/79303011
-#[derive(Clone)]
 pub struct RadixTree<M: ac_library::Monoid> {
     tree: BinaryRadixTree<M>,
 }
@@ -400,6 +417,14 @@ impl<M: ac_library::Monoid> Default for RadixTree<M> {
     fn default() -> Self {
         Self {
             tree: Default::default(),
+        }
+    }
+}
+
+impl<M: ac_library::Monoid> Clone for RadixTree<M> {
+    fn clone(&self) -> Self {
+        Self {
+            tree: self.tree.clone()
         }
     }
 }
