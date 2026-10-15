@@ -27,27 +27,27 @@ pub fn mmap_input_mut() -> *mut u8 {
 #[inline(always)]
 pub fn parse_digits_u64(mut x: u64) -> u32 {
     x &= 0x0F0F0F0F0F0F0F0F;
-    x = (x * 0x0A01) >> 8;
+    x = x.wrapping_mul(0x0A01) >> 8;
     x &= 0x00FF00FF00FF00FF;
-    x = (x * 0x00640001) >> 16;
+    x = x.wrapping_mul(0x00640001) >> 16;
     x &= 0x0000FFFF0000FFFF;
-    x = (x * 0x271000000001) >> 32;
+    x = x.wrapping_mul(0x271000000001) >> 32;
     x as u32
 }
 
 #[inline(always)]
 pub fn parse_digits_u32(mut x: u32) -> u32 {
     x &= 0x0F0F0F0F;
-    x = (x * 0x0A01) >> 8;
+    x = x.wrapping_mul(0x0A01) >> 8;
     x &= 0x00FF00FF;
-    x = (x * 0x00640001) >> 16;
+    x = x.wrapping_mul(0x00640001) >> 16;
     x
 }
 
 #[inline(always)]
 pub fn parse_digits_u16(mut x: u16) -> u16 {
     x &= 0x0F0F;
-    x = (x * 0x0A01) >> 8;
+    x = x.wrapping_mul(0x0A01) >> 8;
     x
 }
 
@@ -78,7 +78,7 @@ pub fn read_u32(ptr: &mut *const u8) -> u32 {
         if length == 0 {
             r
         } else {
-            r * if length == 1 { 10 } else { 100 } + parse_digits_u16(bytes << (64-(length<<3))) as u32
+            r * if length == 1 { 10 } else { 100 } + parse_digits_u16(bytes << (16-(length<<3))) as u32
         }
     }
 }

@@ -59,13 +59,13 @@ impl<T: TopKOperation> TopK<T> {
         self.balance();
     }
 
-    pub fn remove(&mut self, value: T::V) {
-        if self.other.contains_key(&value) {
-            T::data_remove(&mut self.other_data, &value);
-            self.other.remove_multiset(&value);
+    pub fn remove(&mut self, value: &T::V) {
+        if self.other.contains_key(value) {
+            T::data_remove(&mut self.other_data, value);
+            self.other.remove_multiset(value);
         } else {
-            T::data_remove(&mut self.top_data, &value);
-            self.top.remove_multiset(&value);
+            T::data_remove(&mut self.top_data, value);
+            self.top.remove_multiset(value);
             self.top_count -= 1;
         }
         self.balance();
@@ -82,7 +82,7 @@ impl<T: TopKOperation> TopK<T> {
 
             self.top_count -= 1;
         }
-        while self.top_count < self.k && let Some(val) = self.other.first_key_value().map(|(i, _)| i.clone()) {
+        while self.top_count < self.k && let Some(val) = self.other.last_key_value().map(|(i, _)| i.clone()) {
             T::data_remove(&mut self.other_data, &val);
             self.other.remove_multiset(&val);
             T::data_insert(&mut self.top_data, &val);

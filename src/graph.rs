@@ -81,7 +81,7 @@ impl EulerTour for Vec<Vec<usize>> {
     }
 }
 
-pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
+pub fn bfs<D, D1: Ord + Copy, V: Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
     let mut queue = VecDeque::new();
@@ -102,7 +102,7 @@ pub fn bfs<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(
     dist
 }
 
-pub fn bfs01<D, D1: Ord + Copy, V: Ord + Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
+pub fn bfs01<D, D1: Ord + Copy, V: Copy>(mut dist: D, get_dist_mut: impl Fn(&mut D, V) -> &mut Option<D1>, initial: (D1, V), next: impl Fn(&mut dyn FnMut(D1, V), D1, V)) -> D {
     use std::collections::VecDeque;
 
     let mut queue = VecDeque::new();

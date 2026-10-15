@@ -273,6 +273,7 @@ impl DivisorLattice {
 }
 
 
+// .1は正でない場合cmpが正しくない場合がある
 #[derive(Copy, Clone, Debug)]
 pub struct Rational(i64, i64);
 
@@ -292,7 +293,7 @@ impl PartialOrd for Rational {
 
 impl Ord for Rational {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.0 * other.1).cmp(&(other.0 * self.1))
+        (self.0 as i128 * other.1 as i128).cmp(&(other.0 as i128 * self.1 as i128))
     }
 }
 
@@ -311,6 +312,7 @@ pub enum ArgPoint {
 
 impl ArgPoint {
     pub fn new(x: i64, y: i64) -> Self {
+        assert_ne!((x, y), (0, 0));
         use Slope::*;
         use ArgPoint::*;
         if x == 0 {

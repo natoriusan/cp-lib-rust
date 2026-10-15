@@ -209,8 +209,7 @@ impl<M: ac_library::Monoid> PersistentSegtree<M> {
             Excluded(&r) => r,
             Unbounded => self.n,
         };
-        assert!(lb < self.n);
-        assert!(rb <= self.n);
+        assert!(lb <= rb && rb <= self.n);
 
         if lb >= rb {
             M::identity()

@@ -18,7 +18,7 @@ pub fn neighborhood8(h: usize, w: usize, i: usize, j: usize) -> impl Iterator<It
     DIJ8.iter().filter_map(move |&(di, dj)| {
         let k = i.wrapping_add(di);
         let l = j.wrapping_add(dj);
-        if (di != 0 || dj != 0) && k < h && l < w {
+        if k < h && l < w {
             Some((k, l))
         } else {
             None
