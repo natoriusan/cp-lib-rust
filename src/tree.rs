@@ -560,6 +560,120 @@ impl<'a, M: ac_library::Monoid> Drop for BinaryRadixTreeCursorMut<'a, M> {
     }
 }
 
+pub struct BinaryRadixTreeCursor<'a, M: ac_library::Monoid> {
+    tree: &'a BinaryRadixTree<M>,
+    path: Vec<u32>,
+    key: bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>,
+    extra_len: usize
+}
+
+impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursor<'a, M> {
+    pub fn key(&self) -> &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0> {
+        &self.key
+    }
+
+    pub fn value(&self) -> M::S {
+        if self.extra_len == 0 {
+            self.tree.nodes[*self.path.last().unwrap() as usize].value.clone()
+        } else {
+            M::identity()
+        }
+    }
+
+    pub fn aggregate(&self) -> M::S {
+        use bitvec::field::BitField;
+        if self.extra_len == 0 {
+            self.tree.nodes[*self.path.last().unwrap() as usize].aggregate.clone()
+        } else {
+            let key = &self.key[self.key.len()-self.extra_len..];
+            let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize] as usize;
+            if self.extra_len <= 64 && let Some(child) = self.tree.nodes.get(child_idx) {
+                let mask =
+                    if self.extra_len == 64 {
+                        !0
+                    } else {
+                        !0 >> (64-self.extra_len) << (64-self.extra_len)
+                    };
+                if self.extra_len <= child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix & mask {
+                    child.aggregate.clone()
+                } else {
+                    M::identity()
+                }
+            } else {
+                M::identity()
+            }
+        }
+    }
+
+    pub fn up(&mut self, mut bits: usize) {
+        assert!(bits <= self.key.len());
+        self.key.resize(self.key.len()-bits, false);
+
+        let min = bits.min(self.extra_len);
+        bits -= min;
+        self.extra_len -= min;
+
+        while bits != 0 {
+            let node = &self.tree.nodes[self.path.pop().unwrap() as usize];
+            self.extra_len = node.len as usize;
+
+            let min = bits.min(self.extra_len);
+            bits -= min;
+            self.extra_len -= min;
+        }
+    }
+
+    pub fn down(&mut self, dir: bool) {
+        use bitvec::field::BitField;
+        self.key.push(dir);
+        self.extra_len += 1;
+        let key = &self.key[self.key.len()-self.extra_len..];
+        let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize];
+        if let Some(child) = self.tree.nodes.get(child_idx as usize) && self.extra_len <= 64
+            && self.extra_len == child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix {
+            self.path.push(child_idx);
+            self.extra_len = 0
+        }
+    }
+
+    fn down_usize(&mut self, key: usize) {
+        use bitvec::field::BitField;
+        let len = self.key.len();
+        self.key.resize(len+64, false);
+        self.key[len..].store_be(key);
+        self.extra_len += 64;
+        let mut key = &self.key[self.key.len()-self.extra_len..];
+        let mut idx = *self.path.last().unwrap() as usize;
+
+        while !key.is_empty() {
+            let child_idx = self.tree.nodes[idx].children[key[0] as usize];
+            if let Some(child) = self.tree.nodes.get(child_idx as usize) {
+                if self.extra_len >= child.len as usize && key[..child.len as usize].load_be::<u64>() << (64-child.len) == child.prefix {
+                    self.path.push(child_idx);
+                    key = &key[child.len as usize..];
+                    idx = child_idx as usize;
+                    self.extra_len -= child.len as usize;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+}
+
+impl<'a, M: ac_library::Monoid> Clone for BinaryRadixTreeCursor<'a, M> {
+    fn clone(&self) -> Self {
+        Self {
+            tree: self.tree,
+            path: self.path.clone(),
+            key: self.key.clone(),
+            extra_len: self.extra_len,
+        }
+    }
+}
+
 // https://atcoder.jp/contests/abc353/submissions/79323824
 pub struct RadixTreeCursorMut<'a, M: ac_library::Monoid> {
     binary_cursor: BinaryRadixTreeCursorMut<'a, M>,
@@ -595,9 +709,52 @@ impl<'a, M: ac_library::Monoid> RadixTreeCursorMut<'a, M> {
     }
 }
 
+pub struct RadixTreeCursor<'a, M: ac_library::Monoid> {
+    binary_cursor: BinaryRadixTreeCursor<'a, M>,
+}
+
+impl<'a, M: ac_library::Monoid> RadixTreeCursor<'a, M> {
+    pub fn key(&self) -> &[usize] {
+        self.binary_cursor.key.as_raw_slice()
+    }
+
+    pub fn value(&self) -> M::S {
+        self.binary_cursor.value()
+    }
+
+    pub fn aggregate(&self) -> M::S {
+        self.binary_cursor.aggregate()
+    }
+
+    pub fn up(&mut self, words: usize) {
+        self.binary_cursor.up(words*64);
+    }
+
+    pub fn down(&mut self, dir: usize) {
+        self.binary_cursor.down_usize(dir);
+    }
+}
+
+impl<'a, M: ac_library::Monoid> Clone for RadixTreeCursor<'a, M> {
+    fn clone(&self) -> Self {
+        Self {
+            binary_cursor: self.binary_cursor.clone(),
+        }
+    }
+}
+
 impl<M: ac_library::Monoid> BinaryRadixTree<M> {
     pub fn cursor_mut(&mut self) -> BinaryRadixTreeCursorMut<'_, M> {
         BinaryRadixTreeCursorMut {
+            tree: self,
+            path: vec![0],
+            key: bitvec::prelude::BitVec::new(),
+            extra_len: 0,
+        }
+    }
+    
+    pub fn cursor(&self) -> BinaryRadixTreeCursor<'_, M> {
+        BinaryRadixTreeCursor {
             tree: self,
             path: vec![0],
             key: bitvec::prelude::BitVec::new(),
@@ -610,6 +767,12 @@ impl<M: ac_library::Monoid> RadixTree<M> {
     pub fn cursor_mut(&mut self) -> RadixTreeCursorMut<'_, M> {
         RadixTreeCursorMut {
             binary_cursor: self.tree.cursor_mut(),
+        }
+    }
+    
+    pub fn cursor(&self) -> RadixTreeCursor<'_, M> {
+        RadixTreeCursor {
+            binary_cursor: self.tree.cursor()
         }
     }
 }
