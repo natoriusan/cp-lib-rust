@@ -2,7 +2,6 @@ pub mod graph;
 pub mod input;
 pub mod math;
 pub mod misc;
-pub mod segtree;
 pub mod set;
 pub mod tree;
 

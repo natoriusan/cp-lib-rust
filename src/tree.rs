@@ -1,10 +1,252 @@
+// [0, 1<<size)のSegment Tree(1-indexedの内部実装)のiが寄与するセグメントのindex一覧 (set用)
+// https://atcoder.jp/contests/abc339/submissions/71935783 (名前変更前)
+pub fn included_segments_pow(size: usize, mut i: usize) -> Vec<usize> {
+    i += 1 << size;
+    let mut segments = vec![];
+    while i > 0 {
+        segments.push(i);
+        i >>= 1;
+    }
+
+    segments
+}
+
+// [0, 1<<size)のSegment Tree(1-indexedの内部実装)の[l, r)のセグメントによる表現 (prod用)
+// 可換専用
+// https://atcoder.jp/contests/abc339/submissions/71935783 (名前変更前)
+pub fn split_segments_pow(size: usize, mut l: usize, mut r: usize) -> Vec<usize> {
+    l += 1 << size;
+    r += 1 << size;
+    let mut segments = vec![];
+    while l > 0 && l != r {
+        if l % 2 == 1 {
+            segments.push(l);
+            l = (l+1)>>1;
+        } else {
+            l >>= 1;
+        }
+        if (r-1) % 2 == 0 {
+            segments.push(r-1);
+        }
+        r >>= 1;
+    }
+
+    segments
+}
+
+// included_segments_powの2冪でなくてもいいバージョン
+pub fn included_segments(n: usize, i: usize) -> impl Iterator<Item=usize> {
+    std::iter::successors(Some(n+i), |&j| (j >= 2).then_some(j>>1))
+}
+
+// split_segments_powの2冪でなくてもいいバージョン
+pub fn split_segments(n: usize, mut l: usize, mut r: usize) -> impl Iterator<Item=usize> {
+    l += n;
+    r += n;
+    let r_orig = r;
+    let mut count = 0;
+    let mut left = true;
+
+    std::iter::from_fn(move || {
+        if left {
+            while l < r {
+                count += 1;
+                r >>= 1;
+                if l % 2 == 1 {
+                    let idx = l;
+                    l += 1;
+                    l >>= 1;
+                    return Some(idx);
+                }
+                l >>= 1;
+            }
+
+            left = false;
+        }
+
+        while count > 0 {
+            count -= 1;
+            let r = r_orig >> count;
+            if r % 2 == 1 {
+                return Some(r-1);
+            }
+        }
+
+        None
+    })
+}
+
+
+// PersistentSegtree
+// https://atcoder.jp/contests/abc453/submissions/74915650
+#[derive(Clone, Debug)]
+struct Node<T> {
+    value: T,
+    children: (usize, usize)
+}
+
+#[derive(Debug)]
+pub struct PersistentSegtree<M: ac_library::Monoid> {
+    nodes: std::rc::Rc<std::cell::RefCell<Vec<Node<M::S>>>>,
+    root: usize,
+    n: usize,
+}
+
+impl<M: ac_library::Monoid> Clone for PersistentSegtree<M> {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            root: self.root,
+            n: self.n,
+        }
+    }
+}
+
+impl<M: ac_library::Monoid> PersistentSegtree<M> {
+    pub fn new(n: usize) -> Self {
+        fn make_tree<M: ac_library::Monoid>(nodes: &mut Vec<Node<M::S>>, l: usize, r: usize) -> usize {
+            let mut node = Node {
+                value: M::identity(),
+                children: (usize::MAX, usize::MAX),
+            };
+            if l+1 < r {
+                node.children = (
+                    make_tree::<M>(nodes, l, (l+r)/2),
+                    make_tree::<M>(nodes, (l+r)/2, r),
+                );
+            }
+
+            nodes.push(node);
+            nodes.len()-1
+        }
+
+        assert!(n > 0);
+        let mut nodes = Vec::with_capacity(n*3);
+        let root = make_tree::<M>(&mut nodes, 0, n);
+        Self {
+            nodes: std::rc::Rc::new(std::cell::RefCell::new(nodes)),
+            root,
+            n,
+        }
+    }
+
+    pub fn get(&self, p: usize) -> M::S {
+        fn get_tree<M: ac_library::Monoid>(nodes: &[Node<M::S>], p: usize, i: usize, l: usize, r: usize) -> M::S {
+            let node = &nodes[i];
+            if l+1 < r {
+                if p < (l+r) / 2 {
+                    get_tree::<M>(nodes, p, node.children.0, l, (l+r)/2)
+                } else {
+                    get_tree::<M>(nodes, p, node.children.1, (l+r)/2, r)
+                }
+            } else {
+                node.value.clone()
+            }
+        }
+
+        assert!(p < self.n);
+        get_tree::<M>(&self.nodes.borrow(), p, self.root, 0, self.n)
+    }
+
+    #[must_use]
+    pub fn set(&self, p: usize, x: M::S) -> Self {
+        fn set_tree<M: ac_library::Monoid>(nodes: &mut Vec<Node<M::S>>, p: usize, x: M::S, i: usize, l: usize, r: usize) -> usize {
+            let new_node =
+                if l+1 < r {
+                    let (left, right) = nodes[i].children;
+                    let children =
+                        if p < (l+r)/2 {
+                            (set_tree::<M>(nodes, p, x, left, l, (l+r)/2), right)
+                        } else {
+                            (left, set_tree::<M>(nodes, p, x, right, (l+r)/2, r))
+                        };
+                    Node {
+                        value: M::binary_operation(&nodes[children.0].value, &nodes[children.1].value),
+                        children,
+                    }
+                } else {
+                    Node {
+                        value: x,
+                        children: (usize::MAX, usize::MAX),
+                    }
+                };
+            nodes.push(new_node);
+            nodes.len()-1
+        }
+
+        assert!(p < self.n);
+        Self {
+            nodes: self.nodes.clone(),
+            root: set_tree::<M>(&mut self.nodes.borrow_mut(), p, x, self.root, 0, self.n),
+            n: self.n,
+        }
+    }
+
+    pub fn prod<R: std::ops::RangeBounds<usize>>(&self, range: R) -> M::S {
+        fn prod_tree<M: ac_library::Monoid>(nodes: &[Node<M::S>], lb: usize, rb: usize, i: usize, l: usize, r: usize) -> M::S {
+            let node = &nodes[i];
+            if lb <= l && r <= rb {
+                node.value.clone()
+            } else if rb <= l || r <= lb {
+                M::identity()
+            } else {
+                let (left, right) = node.children;
+                M::binary_operation(
+                    &prod_tree::<M>(nodes, lb, rb, left, l, (l+r)/2),
+                    &prod_tree::<M>(nodes, lb, rb, right, (l+r)/2, r),
+                )
+            }
+        }
+
+        use std::collections::Bound::*;
+        let lb = match range.start_bound() {
+            Included(&l) => l,
+            Excluded(&l) => l+1,
+            Unbounded => 0,
+        };
+        let rb = match range.end_bound() {
+            Included(&r) => r+1,
+            Excluded(&r) => r,
+            Unbounded => self.n,
+        };
+        assert!(lb <= rb && rb <= self.n);
+
+        if lb >= rb {
+            M::identity()
+        } else {
+            prod_tree::<M>(&self.nodes.borrow(), lb, rb, self.root, 0, self.n)
+        }
+    }
+}
+
+
 // パス圧縮付きのBinaryTrie (https://atcoder.jp/contests/abc475/submissions/79302686)
+type RadixKey = bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>;
+
 struct BinaryRadixTreeNode<M: ac_library::Monoid> {
     prefix: u64,
     len: u8,
     children: [u32; 2],
     value: M::S,
     aggregate: M::S
+}
+
+impl<M: ac_library::Monoid> BinaryRadixTreeNode<M> {
+    fn lcp(&self, key: &RadixKey) -> usize {
+        use bitvec::field::BitField;
+        let size = key.len().min(self.len as usize);
+        if size == 0 { return 0; }
+        let chunk = key[..size].load_be::<u64>() << (64-size);
+
+        ((self.prefix ^ chunk).leading_zeros() as usize).min(size)
+    }
+    
+    fn is_prefix(&self, key: &RadixKey) -> bool {
+        use bitvec::field::BitField;
+        if (self.len as usize) > key.len() { return false; }
+        if self.len == 0 { return true; }
+        self.prefix == key[..self.len as usize].load_be::<u64>() << (64-self.len)
+    }
 }
 
 impl<M: ac_library::Monoid> Clone for BinaryRadixTreeNode<M> {
@@ -42,20 +284,20 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         self.nodes.len()
     }
 
-    pub fn get(&self, mut key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>) -> M::S {
-        use bitvec::field::BitField;
+    pub fn get(&self, mut key: &RadixKey) -> M::S {
         let mut idx = 0;
         loop {
             if key.is_empty() { break self.nodes[idx].value.clone(); }
 
             let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
             if let Some(child) = self.nodes.get(child_idx) {
-                if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix {
+                if child.is_prefix(key) {
+                    idx = child_idx;
+                    key = &key[child.len as usize..];
+                } else {
                     break M::identity();
                 }
 
-                idx = child_idx;
-                key = &key[child.len as usize..];
             } else {
                 break M::identity();
             }
@@ -63,30 +305,33 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
     }
     
     fn update(&mut self, idx: usize) {
-        let mut agg = M::identity();
-        for i in self.nodes[idx].children {
-            if let Some(c) = self.nodes.get(i as usize) {
-                agg = M::binary_operation(&agg, &c.aggregate);
+        let node = &self.nodes[idx];
+        let mut agg = node.value.clone();
+        for child_idx in node.children {
+            if let Some(child) = self.nodes.get(child_idx as usize) {
+                agg = M::binary_operation(&agg, &child.aggregate);
             }
         }
-        let node = &mut self.nodes[idx];
-        node.aggregate = M::binary_operation(&node.value, &agg);
+        
+        self.nodes[idx].aggregate = agg;
     }
 
-    pub fn modify(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl FnOnce(&M::S) -> M::S) {
+    pub fn modify(&mut self, key: &RadixKey, f: impl FnOnce(&M::S) -> M::S) {
         self.modify_rec(key, f, 0);
     }
 
-    fn modify_rec(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
+    fn modify_rec(&mut self, key: &RadixKey, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
         use bitvec::field::BitField;
         if key.is_empty() {
             self.nodes[idx].value = f(&self.nodes[idx].value);
         } else {
-            let size = key.len().min(64);
-            let chunk = key[..size].load_be::<u64>() << (64-size);
-
-            if self.nodes[idx].children[key[0] as usize] == u32::MAX {
-                self.nodes[idx].children[key[0] as usize] = self.len() as u32;
+            let dir = key[0] as usize;
+            let child_idx = self.nodes[idx].children[dir] as usize;
+            
+            if child_idx == u32::MAX as usize {
+                let size = key.len().min(64);
+                let chunk = key[..size].load_be::<u64>() << (64-size);
+                self.nodes[idx].children[dir] = self.len() as u32;
                 self.nodes.push(BinaryRadixTreeNode {
                     prefix: chunk,
                     len: size as u8,
@@ -94,163 +339,107 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
                     value: M::identity(),
                     aggregate: M::identity(),
                 });
-            }
-
-            let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
-            let child = &self.nodes[child_idx];
-            let len = ((chunk ^ child.prefix).leading_zeros() as u8).min(child.len).min(size as u8);
-
-            if len == child.len {
-                self.modify_rec(&key[len as usize..], f, child_idx);
+                self.modify_rec(&key[size..], f, self.len()-1);
             } else {
-                self.nodes[idx].children[key[0] as usize] = self.len() as u32;
-                let child = &mut self.nodes[child_idx];
-                child.prefix <<= len;
-                child.len -= len;
-                let prefix = child.prefix;
-                self.nodes.push(BinaryRadixTreeNode {
-                    prefix: chunk >> (64-len) << (64-len),
-                    len,
-                    children: if prefix >> 63 == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
-                    value: M::identity(),
-                    aggregate: M::identity(),
-                });
+                let child = &self.nodes[child_idx];
+                let len = child.lcp(key);
 
-                self.modify_rec(&key[len as usize..], f, self.len()-1);
+                if len == child.len as usize {
+                    self.modify_rec(&key[len..], f, child_idx);
+                } else {
+                    self.nodes[idx].children[dir] = self.len() as u32;
+                    let child = &mut self.nodes[child_idx];
+                    let new_prefix = child.prefix >> (64-len) << (64-len);
+                    child.prefix <<= len;
+                    child.len -= len as u8;
+                    let prefix = child.prefix;
+                    self.nodes.push(BinaryRadixTreeNode {
+                        prefix: new_prefix,
+                        len: len as u8,
+                        children: if prefix >> 63 == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
+                        value: M::identity(),
+                        aggregate: M::identity(),
+                    });
+
+                    self.modify_rec(&key[len..], f, self.len()-1);
+                }
             }
         }
         
         self.update(idx);
     }
 
-    pub fn set(&mut self, key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, value: M::S) {
+    pub fn set(&mut self, key: &RadixKey, value: M::S) {
         self.modify(key, |_| value);
     }
 
-    pub fn prod<'a, R: std::ops::RangeBounds<&'a bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>>>(&self, range: R) -> M::S {
+    pub fn prod<'a, R: std::ops::RangeBounds<&'a RadixKey>>(&self, range: R) -> M::S {
         self.prod_rec(range.start_bound().cloned(), range.end_bound().cloned(), 0)
     }
 
-    fn prod_rec(&self, left: std::ops::Bound<&bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>>, right: std::ops::Bound<&bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>>, idx: usize) -> M::S {
-        use bitvec::field::BitField;
+    fn prod_rec(&self, left: std::ops::Bound<&RadixKey>, right: std::ops::Bound<&RadixKey>, idx: usize) -> M::S {
         use std::ops::Bound::*;
 
-        if let Unbounded = right {
-            if let Included(key) = left && key.is_empty() {
-                return self.nodes[idx].aggregate.clone();
-            }
-            if let Unbounded = left {
-                return self.nodes[idx].aggregate.clone();
-            }
+        if let Excluded(key) = right && key.is_empty() {
+            return M::identity();
+        }
+        
+        let left_unbounded = match left {
+            Included(key) => key.is_empty(),
+            Excluded(_) => false,
+            Unbounded => true,
+        };
+        
+        if let Unbounded = right && left_unbounded {
+            return self.nodes[idx].aggregate.clone();
         }
 
         let mut r =
-            if let Excluded(key) = right && key.is_empty() {
-                M::identity()
-            } else if let Included(key) = left && key.is_empty() {
-                self.nodes[idx].value.clone()
-            } else if let Unbounded = left {
+            if left_unbounded {
                 self.nodes[idx].value.clone()
             } else {
                 M::identity()
             };
-
-        for i in 0..2 {
-            let child_idx = self.nodes[idx].children[i] as usize;
-            if let Some(child) = self.nodes.get(child_idx) {
-                let left_key = match left {
-                    Included(key) => Some(key),
-                    Excluded(key) => Some(key),
-                    Unbounded => None,
-                };
-
-                let right_key = match right {
-                    Included(key) => Some(key),
-                    Excluded(key) => Some(key),
-                    Unbounded => None,
-                };
-
-                let new_left =
-                    if let Some(key) = left_key {
-                        if key.is_empty() {
-                            None
-                        } else if key.len() < child.len as usize {
-                            let chunk = key.load_be::<u64>() << (64-key.len());
-                            if chunk <= child.prefix {
-                                None
-                            } else {
-                                continue;
-                            }
-                        } else {
-                            let chunk = key[..child.len as usize].load_be::<u64>() << (64-child.len);
-                            if chunk < child.prefix {
-                                None
-                            } else if chunk > child.prefix {
-                                continue;
-                            } else {
-                                Some(&key[child.len as usize..])
-                            }
-                        }
+        
+        for child_idx in self.nodes[idx].children {
+            let Some(child) = self.nodes.get(child_idx as usize) else { continue; };
+            
+            let new_left = match left {
+                Included(key) | Excluded(key) => {
+                    let lcp = child.lcp(key);
+                    if child.len as usize == lcp {
+                        left.map(|_| &key[child.len as usize..])
+                    } else if lcp == key.len() || !key[lcp] {
+                        Unbounded
                     } else {
-                        None
-                    };
+                        continue;
+                    }
+                }
+                Unbounded => Unbounded
+            };
 
-                let new_left =
-                    if let Some(new_left) = new_left {
-                        if let Included(_) = left {
-                            Included(new_left)
-                        } else {
-                            Excluded(new_left)
-                        }
+            let new_right = match right {
+                Included(key) | Excluded(key) => {
+                    let lcp = child.lcp(key);
+                    if child.len as usize == lcp {
+                        right.map(|_| &key[child.len as usize..])
+                    } else if lcp == key.len() || !key[lcp] {
+                        continue;
                     } else {
                         Unbounded
-                    };
+                    }
+                }
+                Unbounded => Unbounded
+            };
+            
 
-                let new_right =
-                    if let Some(key) = right_key {
-                        if key.is_empty() {
-                            continue;
-                        } else if key.len() < child.len as usize {
-                            let chunk = key.load_be::<u64>() << (64-key.len());
-                            if chunk > child.prefix {
-                                None
-                            } else {
-                                continue;
-                            }
-                        } else {
-                            let chunk = key[..child.len as usize].load_be::<u64>() << (64-child.len);
-                            if child.prefix < chunk {
-                                None
-                            } else if child.prefix > chunk {
-                                continue;
-                            } else {
-                                Some(&key[child.len as usize..])
-                            }
-                        }
-                    } else {
-                        None
-                    };
-
-                let new_right =
-                    if let Some(new_right) = new_right {
-                        if let Included(_) = right {
-                            Included(new_right)
-                        } else {
-                            Excluded(new_right)
-                        }
-                    } else {
-                        Unbounded
-                    };
-
-                r = M::binary_operation(&r, &self.prod_rec(new_left, new_right, child_idx));
-            }
+            r = M::binary_operation(&r, &self.prod_rec(new_left, new_right, child_idx as usize));
         }
 
         r
     }
 
-    pub fn prod_prefix(&self, mut key: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>) -> M::S {
-        use bitvec::field::BitField;
+    pub fn prod_prefix(&self, mut key: &RadixKey) -> M::S {
         let mut idx = 0;
         let mut acc = M::identity();
         loop {
@@ -258,11 +447,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             if key.is_empty() { break; }
             
             let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
-            if let Some(child) = self.nodes.get(child_idx) {
-                if key.len() < child.len as usize || key[..child.len as usize].load_be::<u64>() << (64-child.len) != child.prefix {
-                    break;
-                }
-                
+            if let Some(child) = self.nodes.get(child_idx) && child.is_prefix(key) {
                 idx = child_idx;
                 key = &key[child.len as usize..];
             } else {
@@ -273,15 +458,12 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         acc
     }
     
-    pub fn max_right(&self, left: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: impl Fn(&M::S) -> bool) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
+    pub fn max_right(&self, left: &RadixKey, f: impl Fn(&M::S) -> bool) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
         assert!(f(&M::identity()));
-        self.max_right_rec(left, &f, 0, &mut M::identity()).map(|mut v| {
-            v.reverse();
-            v
-        })
+        self.max_right_rec(left, &f, 0, &mut M::identity(), 0)
     }
 
-    fn max_right_rec(&self, left: &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>, f: &impl Fn(&M::S) -> bool, idx: usize, acc: &mut M::S) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
+    fn max_right_rec(&self, left: &RadixKey, f: &impl Fn(&M::S) -> bool, idx: usize, acc: &mut M::S, depth: usize) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
         use bitvec::field::BitField;
         use bitvec::prelude::{BitVec, BitSlice};
         let node = &self.nodes[idx];
@@ -294,47 +476,32 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
 
             let new_acc = M::binary_operation(acc, &node.value);
             if !f(&new_acc) {
-                let mut v = BitVec::repeat(false, node.len as usize);
+                let mut v = BitVec::repeat(false, depth);
                 if node.len > 0 {
-                    v.store_be(node.prefix.reverse_bits());
+                    v[depth-node.len as usize..depth].store_be(node.prefix >> (64-node.len));
                 }
                 return Some(v);
             }
             *acc = new_acc;
         }
 
-        for i in 0..2 {
-            let child_idx = node.children[i] as usize;
-            if let Some(child) = self.nodes.get(child_idx) {
-                let v =
-                    if left.is_empty() {
-                        self.max_right_rec(left, f, child_idx, acc)
-                    } else if left.len() < child.len as usize {
-                        let chunk = left.load_be::<u64>() << (64-left.len());
-                        if chunk <= child.prefix {
-                            self.max_right_rec(BitSlice::empty(), f, child_idx, acc)
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        let chunk = left[..child.len as usize].load_be::<u64>() << (64-child.len);
-                        if chunk < child.prefix {
-                            self.max_right_rec(BitSlice::empty(), f, child_idx, acc)
-                        } else if chunk == child.prefix {
-                            self.max_right_rec(&left[child.len as usize..], f, child_idx, acc)
-                        } else {
-                            continue;
-                        }
-                    };
+        for child_idx in node.children {
+            let Some(child) = self.nodes.get(child_idx as usize) else { continue; };
+            let lcp = child.lcp(left);
+            let new_left =
+                if child.len as usize == lcp {
+                    &left[lcp..]
+                } else if lcp == left.len() || !left[lcp] {
+                    BitSlice::empty()
+                } else {
+                    continue;
+                };
 
-                if let Some(mut v) = v {
-                    if node.len > 0 {
-                        let l = v.len();
-                        v.resize(v.len()+node.len as usize, false);
-                        v[l..].store_be(node.prefix.reverse_bits());
-                    }
-                    return Some(v);
+            if let Some(mut v) = self.max_right_rec(new_left, f, child_idx as usize, acc, depth+child.len as usize) {
+                if node.len > 0 {
+                    v[depth-node.len as usize..depth].store_be(node.prefix >> (64-node.len));
                 }
+                return Some(v);
             }
         }
 
@@ -382,25 +549,9 @@ impl<M: ac_library::Monoid> RadixTree<M> {
     }
 
     pub fn prod<'a, R: std::ops::RangeBounds<&'a [usize]>>(&self, range: R) -> M::S {
-        use std::ops::Bound::*;
-        let start = match range.start_bound().cloned() {
-            Included(it) => {
-                Included(bitvec::prelude::BitSlice::from_slice(it))
-            },
-            Excluded(it) => {
-                Excluded(bitvec::prelude::BitSlice::from_slice(it))
-            },
-            Unbounded => Unbounded,
-        };
-        let end = match range.end_bound().cloned() {
-            Included(it) => {
-                Included(bitvec::prelude::BitSlice::from_slice(it))
-            },
-            Excluded(it) => {
-                Excluded(bitvec::prelude::BitSlice::from_slice(it))
-            },
-            Unbounded => Unbounded,
-        };
+        use bitvec::prelude::BitSlice;
+        let start = range.start_bound().cloned().map(BitSlice::from_slice);
+        let end = range.end_bound().cloned().map(BitSlice::from_slice);
         self.tree.prod((start, end))
     }
     
@@ -429,12 +580,142 @@ impl<M: ac_library::Monoid> Clone for RadixTree<M> {
     }
 }
 
-pub struct BinaryRadixTreeCursorMut<'a, M: ac_library::Monoid> {
-    tree: &'a mut BinaryRadixTree<M>,
+pub trait BinaryRadixTreeRef {
+    type M: ac_library::Monoid;
+    const IS_MUT: bool;
+    fn tree(&self) -> &BinaryRadixTree<Self::M>;
+    fn update(&mut self, _idx: usize) {}
+}
+
+#[derive(Clone)]
+pub struct BinaryRadixTreeCursorBase<T: BinaryRadixTreeRef> {
+    tree: T,
     path: Vec<u32>,
     key: bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>,
     extra_len: usize
 }
+
+impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBase<T> {
+    pub fn key(&self) -> &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0> {
+        &self.key
+    }
+
+    pub fn value(&self) -> M::S {
+        if self.extra_len == 0 {
+            self.tree.tree().nodes[*self.path.last().unwrap() as usize].value.clone()
+        } else {
+            M::identity()
+        }
+    }
+
+    pub fn aggregate(&self) -> M::S {
+        let tree = self.tree.tree();
+        let idx = *self.path.last().unwrap() as usize;
+        if self.extra_len == 0 {
+            tree.nodes[idx].aggregate.clone()
+        } else {
+            let key = &self.key[self.key.len()-self.extra_len..];
+            let child_idx = tree.nodes[idx].children[key[0] as usize] as usize;
+            if let Some(child) = tree.nodes.get(child_idx) && child.lcp(key) == key.len() {
+                child.aggregate.clone()
+            } else {
+                M::identity()
+            }
+        }
+    }
+
+    pub fn up(&mut self, mut bits: usize) {
+        assert!(bits <= self.key.len());
+        self.key.resize(self.key.len()-bits, false);
+
+        let min = bits.min(self.extra_len);
+        bits -= min;
+        self.extra_len -= min;
+
+        while bits != 0 {
+            let node = &self.tree.tree().nodes[self.path.pop().unwrap() as usize];
+            self.extra_len = node.len as usize;
+
+            let min = bits.min(self.extra_len);
+            bits -= min;
+            self.extra_len -= min;
+            self.tree.update(*self.path.last().unwrap() as usize);
+        }
+    }
+    
+    fn update_path(&mut self) {
+        let tree = self.tree.tree();
+        let mut key = &self.key[self.key.len()-self.extra_len..];
+        let mut idx = *self.path.last().unwrap() as usize;
+
+        while !key.is_empty() {
+            let child_idx = tree.nodes[idx].children[key[0] as usize];
+            if let Some(child) = tree.nodes.get(child_idx as usize) && child.is_prefix(key) {
+                self.path.push(child_idx);
+                key = &key[child.len as usize..];
+                idx = child_idx as usize;
+                self.extra_len -= child.len as usize;
+            } else {
+                break;
+            }
+        }
+    }
+
+    pub fn down(&mut self, dir: bool) {
+        self.key.push(dir);
+        self.extra_len += 1;
+        self.update_path()
+    }
+    
+    /// 下位bitsビット
+    pub fn down_bits(&mut self, key: usize, bits: usize) {
+        use bitvec::field::BitField;
+        if bits == 0 { return; }
+        let len = self.key.len();
+        self.key.resize(len+bits, false);
+        self.key[len..].store_be(key);
+        self.extra_len += bits;
+        self.update_path();
+    }
+
+    fn down_usize(&mut self, key: usize) {
+        self.down_bits(key, 64);
+    }
+}
+
+impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> Drop for BinaryRadixTreeCursorBase<T> {
+    fn drop(&mut self) {
+        if T::IS_MUT {
+            self.up(self.key.len());
+        }
+    }
+}
+
+impl<M: ac_library::Monoid> BinaryRadixTreeRef for &mut BinaryRadixTree<M> {
+    type M = M;
+    const IS_MUT: bool = true;
+
+    fn tree(&self) -> &BinaryRadixTree<M> {
+        self
+    }
+
+    fn update(&mut self, idx: usize) {
+        (*self).update(idx);
+    }
+}
+
+impl<M: ac_library::Monoid> BinaryRadixTreeRef for &BinaryRadixTree<M> {
+    type M = M;
+    const IS_MUT: bool = false;
+
+    fn tree(&self) -> &BinaryRadixTree<M> {
+        self
+    }
+}
+
+pub type BinaryRadixTreeCursor<'a, M> = BinaryRadixTreeCursorBase<&'a BinaryRadixTree<M>>;
+
+pub type BinaryRadixTreeCursorMut<'a, M> = BinaryRadixTreeCursorBase<&'a mut BinaryRadixTree<M>>;
 
 impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursorMut<'a, M> {
     pub fn modify(&mut self, f: impl FnOnce(&M::S) -> M::S) {
@@ -457,226 +738,39 @@ impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursorMut<'a, M> {
     pub fn set(&mut self, value: M::S) {
         self.modify(|_| value);
     }
-    
-    pub fn key(&self) -> &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0> {
-        &self.key
-    }
-    
-    pub fn value(&self) -> M::S {
-        if self.extra_len == 0 {
-            self.tree.nodes[*self.path.last().unwrap() as usize].value.clone()
-        } else {
-            M::identity()
-        }
-    }
-    
-    pub fn aggregate(&self) -> M::S {
-        use bitvec::field::BitField;
-        if self.extra_len == 0 {
-            self.tree.nodes[*self.path.last().unwrap() as usize].aggregate.clone()
-        } else {
-            let key = &self.key[self.key.len()-self.extra_len..];
-            let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize] as usize;
-            if self.extra_len <= 64 && let Some(child) = self.tree.nodes.get(child_idx) {
-                let mask =
-                    if self.extra_len == 64 {
-                        !0
-                    } else {
-                        !0 >> (64-self.extra_len) << (64-self.extra_len)
-                    };
-                if self.extra_len <= child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix & mask {
-                    child.aggregate.clone()
-                } else {
-                    M::identity()
-                }
-            } else {
-                M::identity()
-            }
-        }
-    }
-    
-    pub fn up(&mut self, mut bits: usize) {
-        assert!(bits <= self.key.len());
-        self.key.resize(self.key.len()-bits, false);
-
-        let min = bits.min(self.extra_len);
-        bits -= min;
-        self.extra_len -= min;
-        
-        while bits != 0 {
-            let node = &self.tree.nodes[self.path.pop().unwrap() as usize];
-            self.extra_len = node.len as usize;
-            
-            let min = bits.min(self.extra_len);
-            bits -= min;
-            self.extra_len -= min;
-            self.tree.update(*self.path.last().unwrap() as usize);
-        }
-    }
-    
-    pub fn down(&mut self, dir: bool) {
-        use bitvec::field::BitField;
-        self.key.push(dir);
-        self.extra_len += 1;
-        let key = &self.key[self.key.len()-self.extra_len..];
-        let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize];
-        if let Some(child) = self.tree.nodes.get(child_idx as usize) && self.extra_len <= 64
-            && self.extra_len == child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix {
-            self.path.push(child_idx);
-            self.extra_len = 0
-        }
-    }
-    
-    fn down_usize(&mut self, key: usize) {
-        use bitvec::field::BitField;
-        let len = self.key.len();
-        self.key.resize(len+64, false);
-        self.key[len..].store_be(key);
-        self.extra_len += 64;
-        let mut key = &self.key[self.key.len()-self.extra_len..];
-        let mut idx = *self.path.last().unwrap() as usize;
-        
-        while !key.is_empty() {
-            let child_idx = self.tree.nodes[idx].children[key[0] as usize];
-            if let Some(child) = self.tree.nodes.get(child_idx as usize) {
-                if self.extra_len >= child.len as usize && key[..child.len as usize].load_be::<u64>() << (64-child.len) == child.prefix {
-                    self.path.push(child_idx);
-                    key = &key[child.len as usize..];
-                    idx = child_idx as usize;
-                    self.extra_len -= child.len as usize;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
 }
 
-impl<'a, M: ac_library::Monoid> Drop for BinaryRadixTreeCursorMut<'a, M> {
-    fn drop(&mut self) {
-        self.up(self.key.len());
-    }
+#[derive(Clone)]
+pub struct RadixTreeCursorBase<T: BinaryRadixTreeRef> {
+    binary_cursor: BinaryRadixTreeCursorBase<T>,
 }
 
-pub struct BinaryRadixTreeCursor<'a, M: ac_library::Monoid> {
-    tree: &'a BinaryRadixTree<M>,
-    path: Vec<u32>,
-    key: bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>,
-    extra_len: usize
-}
-
-impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursor<'a, M> {
-    pub fn key(&self) -> &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0> {
-        &self.key
-    }
-
-    pub fn value(&self) -> M::S {
-        if self.extra_len == 0 {
-            self.tree.nodes[*self.path.last().unwrap() as usize].value.clone()
-        } else {
-            M::identity()
-        }
-    }
-
-    pub fn aggregate(&self) -> M::S {
-        use bitvec::field::BitField;
-        if self.extra_len == 0 {
-            self.tree.nodes[*self.path.last().unwrap() as usize].aggregate.clone()
-        } else {
-            let key = &self.key[self.key.len()-self.extra_len..];
-            let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize] as usize;
-            if self.extra_len <= 64 && let Some(child) = self.tree.nodes.get(child_idx) {
-                let mask =
-                    if self.extra_len == 64 {
-                        !0
-                    } else {
-                        !0 >> (64-self.extra_len) << (64-self.extra_len)
-                    };
-                if self.extra_len <= child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix & mask {
-                    child.aggregate.clone()
-                } else {
-                    M::identity()
-                }
-            } else {
-                M::identity()
-            }
-        }
-    }
-
-    pub fn up(&mut self, mut bits: usize) {
-        assert!(bits <= self.key.len());
-        self.key.resize(self.key.len()-bits, false);
-
-        let min = bits.min(self.extra_len);
-        bits -= min;
-        self.extra_len -= min;
-
-        while bits != 0 {
-            let node = &self.tree.nodes[self.path.pop().unwrap() as usize];
-            self.extra_len = node.len as usize;
-
-            let min = bits.min(self.extra_len);
-            bits -= min;
-            self.extra_len -= min;
-        }
-    }
-
-    pub fn down(&mut self, dir: bool) {
-        use bitvec::field::BitField;
-        self.key.push(dir);
-        self.extra_len += 1;
-        let key = &self.key[self.key.len()-self.extra_len..];
-        let child_idx = self.tree.nodes[*self.path.last().unwrap() as usize].children[key[0] as usize];
-        if let Some(child) = self.tree.nodes.get(child_idx as usize) && self.extra_len <= 64
-            && self.extra_len == child.len as usize && key.load_be::<u64>() << (64-self.extra_len) == child.prefix {
-            self.path.push(child_idx);
-            self.extra_len = 0
-        }
-    }
-
-    fn down_usize(&mut self, key: usize) {
-        use bitvec::field::BitField;
-        let len = self.key.len();
-        self.key.resize(len+64, false);
-        self.key[len..].store_be(key);
-        self.extra_len += 64;
-        let mut key = &self.key[self.key.len()-self.extra_len..];
-        let mut idx = *self.path.last().unwrap() as usize;
-
-        while !key.is_empty() {
-            let child_idx = self.tree.nodes[idx].children[key[0] as usize];
-            if let Some(child) = self.tree.nodes.get(child_idx as usize) {
-                if self.extra_len >= child.len as usize && key[..child.len as usize].load_be::<u64>() << (64-child.len) == child.prefix {
-                    self.path.push(child_idx);
-                    key = &key[child.len as usize..];
-                    idx = child_idx as usize;
-                    self.extra_len -= child.len as usize;
-                } else {
-                    break;
-                }
-            } else {
-                break;
-            }
-        }
-    }
-}
-
-impl<'a, M: ac_library::Monoid> Clone for BinaryRadixTreeCursor<'a, M> {
-    fn clone(&self) -> Self {
-        Self {
-            tree: self.tree,
-            path: self.path.clone(),
-            key: self.key.clone(),
-            extra_len: self.extra_len,
-        }
-    }
-}
+pub type RadixTreeCursor<'a, M> = RadixTreeCursorBase<&'a BinaryRadixTree<M>>;
 
 // https://atcoder.jp/contests/abc353/submissions/79323824
-pub struct RadixTreeCursorMut<'a, M: ac_library::Monoid> {
-    binary_cursor: BinaryRadixTreeCursorMut<'a, M>,
+pub type RadixTreeCursorMut<'a, M> = RadixTreeCursorBase<&'a mut BinaryRadixTree<M>>;
+
+
+impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> RadixTreeCursorBase<T>  {
+    pub fn key(&self) -> &[usize] {
+        self.binary_cursor.key.as_raw_slice()
+    }
+
+    pub fn value(&self) -> M::S {
+        self.binary_cursor.value()
+    }
+
+    pub fn aggregate(&self) -> M::S {
+        self.binary_cursor.aggregate()
+    }
+
+    pub fn up(&mut self, words: usize) {
+        self.binary_cursor.up(words*64);
+    }
+
+    pub fn down(&mut self, dir: usize) {
+        self.binary_cursor.down_usize(dir);
+    }
 }
 
 impl<'a, M: ac_library::Monoid> RadixTreeCursorMut<'a, M> {
@@ -687,65 +781,12 @@ impl<'a, M: ac_library::Monoid> RadixTreeCursorMut<'a, M> {
     pub fn set(&mut self, value: M::S) {
         self.binary_cursor.set(value);
     }
-    
-    pub fn key(&self) -> &[usize] {
-        self.binary_cursor.key.as_raw_slice()
-    }
-    
-    pub fn value(&self) -> M::S {
-        self.binary_cursor.value()
-    }
-    
-    pub fn aggregate(&self) -> M::S {
-        self.binary_cursor.aggregate()
-    }
-    
-    pub fn up(&mut self, words: usize) {
-        self.binary_cursor.up(words*64);
-    }
-    
-    pub fn down(&mut self, dir: usize) {
-        self.binary_cursor.down_usize(dir);
-    }
 }
 
-pub struct RadixTreeCursor<'a, M: ac_library::Monoid> {
-    binary_cursor: BinaryRadixTreeCursor<'a, M>,
-}
-
-impl<'a, M: ac_library::Monoid> RadixTreeCursor<'a, M> {
-    pub fn key(&self) -> &[usize] {
-        self.binary_cursor.key.as_raw_slice()
-    }
-
-    pub fn value(&self) -> M::S {
-        self.binary_cursor.value()
-    }
-
-    pub fn aggregate(&self) -> M::S {
-        self.binary_cursor.aggregate()
-    }
-
-    pub fn up(&mut self, words: usize) {
-        self.binary_cursor.up(words*64);
-    }
-
-    pub fn down(&mut self, dir: usize) {
-        self.binary_cursor.down_usize(dir);
-    }
-}
-
-impl<'a, M: ac_library::Monoid> Clone for RadixTreeCursor<'a, M> {
-    fn clone(&self) -> Self {
-        Self {
-            binary_cursor: self.binary_cursor.clone(),
-        }
-    }
-}
 
 impl<M: ac_library::Monoid> BinaryRadixTree<M> {
-    pub fn cursor_mut(&mut self) -> BinaryRadixTreeCursorMut<'_, M> {
-        BinaryRadixTreeCursorMut {
+    pub fn cursor(&self) -> BinaryRadixTreeCursor<'_, M> {
+        BinaryRadixTreeCursor {
             tree: self,
             path: vec![0],
             key: bitvec::prelude::BitVec::new(),
@@ -753,8 +794,8 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         }
     }
     
-    pub fn cursor(&self) -> BinaryRadixTreeCursor<'_, M> {
-        BinaryRadixTreeCursor {
+    pub fn cursor_mut(&mut self) -> BinaryRadixTreeCursorMut<'_, M> {
+        BinaryRadixTreeCursorMut {
             tree: self,
             path: vec![0],
             key: bitvec::prelude::BitVec::new(),
@@ -764,15 +805,224 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
 }
 
 impl<M: ac_library::Monoid> RadixTree<M> {
+    pub fn cursor(&self) -> RadixTreeCursor<'_, M> {
+        RadixTreeCursor {
+            binary_cursor: self.tree.cursor()
+        }
+    }
+    
     pub fn cursor_mut(&mut self) -> RadixTreeCursorMut<'_, M> {
         RadixTreeCursorMut {
             binary_cursor: self.tree.cursor_mut(),
         }
     }
+}
+
+
+struct RadixState<'a, M: ac_library::Monoid> {
+    nodes: &'a [BinaryRadixTreeNode<M>],
+    idx: u32,
+    skip: u8,
+}
+
+impl<'a, M: ac_library::Monoid> Clone for RadixState<'a, M> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'a, M: ac_library::Monoid> Copy for RadixState<'a, M> {
     
-    pub fn cursor(&self) -> RadixTreeCursor<'_, M> {
-        RadixTreeCursor {
-            binary_cursor: self.tree.cursor()
+}
+
+pub struct SegRadixTree<M: ac_library::Monoid> {
+    trees: Vec<RadixTree<M>>
+}
+
+impl<M: ac_library::Monoid> SegRadixTree<M> {
+    pub fn new(x_len: usize) -> Self {
+        Self {
+            trees: vec![RadixTree::new(); 2*x_len],
         }
+    }
+
+    fn len(&self) -> usize {
+        self.trees.len() / 2
+    }
+
+    pub fn get(&self, x: usize, y: &[usize]) -> M::S {
+        self.trees[self.len()+x].get(y)
+    }
+
+    pub fn modify(&mut self, x: usize, y: &[usize], f: impl FnOnce(&M::S) -> M::S) {
+        let mut idx = self.len()+x;
+        let mut val = None;
+        self.trees[idx].modify(y, |v| {
+            val = Some(f(v));
+            val.clone().unwrap()
+        });
+        let mut val = val.unwrap();
+        
+        while idx > 1 {
+            val =
+                if idx.is_multiple_of(2) {
+                    M::binary_operation(&val, &self.trees[idx+1].get(y))
+                } else {
+                    M::binary_operation(&self.trees[idx-1].get(y), &val)
+                };
+            
+            idx /= 2;
+            self.trees[idx].set(y, val.clone());
+        }
+    }
+
+    pub fn set(&mut self, x: usize, y: &[usize], value: M::S) {
+        self.modify(x, y, |_| value);
+    }
+
+    pub fn prod<'a, R: std::ops::RangeBounds<&'a [usize]>>(&self, x_range: impl std::ops::RangeBounds<usize>, y_range: R) -> M::S {
+        use std::collections::Bound::*;
+        let xl = match x_range.start_bound() {
+            Included(&xl) => xl,
+            Excluded(&xl) => xl+1,
+            Unbounded => 0,
+        };
+        let xr = match x_range.end_bound() {
+            Included(&xr) => xr+1,
+            Excluded(&xr) => xr,
+            Unbounded => self.len(),
+        };
+        assert!(xl <= xr && xr <= self.len());
+
+        let mut r = M::identity();
+        for i in split_segments(self.len(), xl, xr) {
+            r = M::binary_operation(&r, &self.trees[i].prod((y_range.start_bound(), y_range.end_bound())))
+        }
+
+        r
+    }
+
+    pub fn max_right_y(&self, x_range: impl std::ops::RangeBounds<usize>, left: &[usize], f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
+        use std::ops::Bound::*;
+        assert!(f(&M::identity()));
+        let xl = match x_range.start_bound() {
+            Included(&xl) => xl,
+            Excluded(&xl) => xl+1,
+            Unbounded => 0,
+        };
+        let xr = match x_range.end_bound() {
+            Included(&xr) => xr+1,
+            Excluded(&xr) => xr,
+            Unbounded => self.len(),
+        };
+        assert!(xl <= xr && xr <= self.len());
+        
+        let mut trees = [RadixState { nodes: &[], idx: 0, skip: 0, }; 64];
+        let mut len = 0;
+        for (i, si) in split_segments(self.len(), xl, xr).enumerate() {
+            len = i+1;
+            trees[i] = RadixState {
+                nodes: &self.trees[si].tree.nodes,
+                idx: 0,
+                skip: 0,
+            }
+        }
+        
+        Self::max_right_y_rec(bitvec::prelude::BitSlice::from_slice(left), &f, &trees, len, &mut M::identity(), 0, 0, 0).map(|v| v.into_vec())
+    }
+
+    fn max_right_y_rec(left: &RadixKey, f: &impl Fn(&M::S) -> bool, trees: &[RadixState<M>; 64], count: usize, acc: &mut M::S, prefix: u64, len: usize, depth: usize) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
+        use bitvec::field::BitField;
+        use bitvec::prelude::{BitVec, BitSlice};
+        if count == 0 { return None; }
+        
+        if left.is_empty() {
+            let mut aggregates = trees[..count].iter().map(|tree| &tree.nodes[tree.idx as usize].aggregate);
+            let prod = M::binary_operation(acc, aggregates.next().unwrap());
+            let new_acc = aggregates.fold(prod, |prod, agg| M::binary_operation(&prod, agg));
+            if f(&new_acc) {
+                *acc = new_acc;
+                return None;
+            }
+
+            let mut values = trees[..count].iter().filter(|tree| tree.skip == tree.nodes[tree.idx as usize].len).map(|tree| &tree.nodes[tree.idx as usize].value);
+            if let Some(head) = values.next() {
+                let prod = M::binary_operation(acc, head);
+                let new_acc = values.fold(prod, |prod, val| M::binary_operation(&prod, val));
+                if !f(&new_acc) {
+                    let mut v = BitVec::repeat(false, depth);
+                    if len > 0 {
+                        v[depth-len..depth].store_be(prefix >> (64-len));
+                    }
+                    return Some(v);
+                }
+                *acc = new_acc;
+            }
+        }
+        
+        for dir in 0..2 {
+            let mut trees = *trees;
+            let mut new_count = count;
+            for i in (0..count).rev() {
+                let tree = &trees[i];
+                let node = &tree.nodes[tree.idx as usize];
+                if tree.skip < node.len {
+                    if (node.prefix >> (63-tree.skip)) & 1 != dir as u64 {
+                        new_count -= 1;
+                        trees.swap(i, new_count);
+                    }
+                } else {
+                    let child_idx = node.children[dir];
+                    if child_idx < u32::MAX {
+                        trees[i].idx = child_idx;
+                        trees[i].skip = 0;
+                    } else {
+                        new_count -= 1;
+                        trees.swap(i, new_count);
+                        
+                    }
+                }
+            }
+            
+            if new_count == 0 { continue; }
+            
+            let mut skip = u32::MAX;
+            let tree0 = trees[0];
+            let p = tree0.nodes[tree0.idx as usize].prefix << tree0.skip;
+            for tree in &trees[..new_count] {
+                let node = &tree.nodes[tree.idx as usize];
+                skip = skip.min(
+                    ((node.prefix << tree.skip) ^ p).leading_zeros().min((node.len-tree.skip) as u32)
+                );
+            }
+            
+            for tree in &mut trees[..new_count] {
+                tree.skip += skip as u8;
+            }
+            
+            let next_left =
+                if left.is_empty() {
+                    BitSlice::empty()
+                } else {
+                    let size = left.len().min(skip as usize);
+                    let lcp = ((p ^ (left[..size].load_be::<u64>() << (64-size))).leading_zeros() as usize).min(size);
+                    if lcp == skip as usize {
+                        &left[skip as usize..]
+                    } else if lcp == left.len() || !left[lcp] {
+                        BitSlice::empty()
+                    } else {
+                        continue;
+                    }
+                };
+            
+            if let Some(mut v) = Self::max_right_y_rec(next_left, f, &trees, new_count, acc, p, skip as usize, depth+skip as usize) {
+                if len > 0 {
+                    v[depth-len..depth].store_be(prefix >> (64-len));
+                }
+                return Some(v);
+            }
+        }
+        
+        None
     }
 }
