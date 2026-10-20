@@ -221,10 +221,76 @@ impl<M: ac_library::Monoid> PersistentSegtree<M> {
 
 
 // パス圧縮付きのBinaryTrie (https://atcoder.jp/contests/abc475/submissions/79302686)
-type RadixKey = bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0>;
+#[derive(Copy, Clone)]
+struct RadixKey<'a> {
+    bits: usize,
+    len: u8, 
+    rem: u8,
+    rest: &'a [usize]
+}
+
+impl<'a> RadixKey<'a> {
+    const fn empty() -> Self {
+        Self {
+            bits: 0,
+            len: 0,
+            rem: 0,
+            rest: &[],
+        }
+    }
+
+    #[inline(always)]
+    const fn new(key: &'a [usize], len: usize) -> Self {
+        debug_assert!(key.len() == len.div_ceil(64));
+        let mut r = Self {
+            bits: 0,
+            len: 0,
+            rem: (len as u8).wrapping_sub(1) % 64 + 1,
+            rest: key,
+        };
+        r.advance(0);
+        r
+    }
+    
+    /// [start, end) bits
+    const fn from_range(key: &'a [usize], start: usize, end: usize) -> Self {
+        let (key, _) = key.split_at(end.div_ceil(64));
+        let (_, key) = key.split_at(start/64);
+        let mut r = Self::new(key, end-start/64*64);
+        r.advance(start as u8%64);
+        r
+    }
+
+    #[inline(always)]
+    const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline(always)]
+    const fn dir(&self) -> usize {
+        self.bits >> 63
+    }
+
+    #[inline(always)]
+    const fn advance(&mut self, len: u8) {
+        self.len -= len;
+        if self.len > 0 {
+            self.bits <<= len;
+        } else if let Some((&bits, rest)) = self.rest.split_first() {
+            self.bits = bits;
+            self.rest = rest;
+            self.len = if self.rest.is_empty() { self.rem } else { 64 };
+        }
+    }
+
+    #[inline(always)]
+    const fn is_one(&self, idx: u8) -> bool {
+        (self.bits << idx) >> 63 == 1
+    }
+}
 
 struct BinaryRadixTreeNode<M: ac_library::Monoid> {
-    prefix: u64,
+    prefix: usize,
     len: u8,
     children: [u32; 2],
     value: M::S,
@@ -232,20 +298,14 @@ struct BinaryRadixTreeNode<M: ac_library::Monoid> {
 }
 
 impl<M: ac_library::Monoid> BinaryRadixTreeNode<M> {
-    fn lcp(&self, key: &RadixKey) -> usize {
-        use bitvec::field::BitField;
-        let size = key.len().min(self.len as usize);
-        if size == 0 { return 0; }
-        let chunk = key[..size].load_be::<u64>() << (64-size);
-
-        ((self.prefix ^ chunk).leading_zeros() as usize).min(size)
+    #[inline(always)]
+    fn lcp(&self, key: RadixKey) -> u8 {
+        ((self.prefix ^ key.bits).leading_zeros() as u8).min(self.len).min(key.len)
     }
-    
-    fn is_prefix(&self, key: &RadixKey) -> bool {
-        use bitvec::field::BitField;
-        if (self.len as usize) > key.len() { return false; }
-        if self.len == 0 { return true; }
-        self.prefix == key[..self.len as usize].load_be::<u64>() << (64-self.len)
+
+    #[inline(always)]
+    fn is_prefix(&self, key: RadixKey) -> bool {
+        ((self.prefix ^ key.bits).leading_zeros() as u8).min(key.len) >= self.len
     }
 }
 
@@ -283,21 +343,17 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
     fn len(&self) -> usize {
         self.nodes.len()
     }
-
-    pub fn get(&self, mut key: &RadixKey) -> M::S {
-        let mut idx = 0;
+    
+    pub fn get(&self, key: &[usize], len: usize) -> M::S {
+        let mut key = RadixKey::new(key, len);
+        let mut node = &self.nodes[0];
         loop {
-            if key.is_empty() { break self.nodes[idx].value.clone(); }
+            if key.is_empty() { break node.value.clone(); }
 
-            let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
-            if let Some(child) = self.nodes.get(child_idx) {
-                if child.is_prefix(key) {
-                    idx = child_idx;
-                    key = &key[child.len as usize..];
-                } else {
-                    break M::identity();
-                }
-
+            let child_idx = node.children[key.dir()] as usize;
+            if let Some(child) = self.nodes.get(child_idx) && child.is_prefix(key) {
+                key.advance(child.len);
+                node = child;
             } else {
                 break M::identity();
             }
@@ -316,52 +372,51 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         self.nodes[idx].aggregate = agg;
     }
 
-    pub fn modify(&mut self, key: &RadixKey, f: impl FnOnce(&M::S) -> M::S) {
-        self.modify_rec(key, f, 0);
+    pub fn modify(&mut self, key: &[usize], len: usize, f: impl FnOnce(&M::S) -> M::S) {
+        self.modify_rec(RadixKey::new(key, len), f, 0);
     }
 
-    fn modify_rec(&mut self, key: &RadixKey, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
-        use bitvec::field::BitField;
-        if key.is_empty() {
-            self.nodes[idx].value = f(&self.nodes[idx].value);
+    fn modify_rec(&mut self, mut key: RadixKey, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
+        let node = &mut self.nodes[idx];
+        if key.is_empty() { 
+            node.value = f(&node.value);
         } else {
-            let dir = key[0] as usize;
-            let child_idx = self.nodes[idx].children[dir] as usize;
+            let dir = key.dir();
+            let child_idx = node.children[dir] as usize;
             
             if child_idx == u32::MAX as usize {
-                let size = key.len().min(64);
-                let chunk = key[..size].load_be::<u64>() << (64-size);
                 self.nodes[idx].children[dir] = self.len() as u32;
                 self.nodes.push(BinaryRadixTreeNode {
-                    prefix: chunk,
-                    len: size as u8,
+                    prefix: key.bits,
+                    len: key.len,
                     children: [u32::MAX; 2],
                     value: M::identity(),
                     aggregate: M::identity(),
                 });
-                self.modify_rec(&key[size..], f, self.len()-1);
+                key.advance(key.len);
+                self.modify_rec(key, f, self.len()-1);
             } else {
-                let child = &self.nodes[child_idx];
-                let len = child.lcp(key);
+                let child = &mut self.nodes[child_idx];
+                let lcp = child.lcp(key);
 
-                if len == child.len as usize {
-                    self.modify_rec(&key[len..], f, child_idx);
+                if lcp == child.len {
+                    key.advance(lcp);
+                    self.modify_rec(key, f, child_idx);
                 } else {
+                    child.prefix <<= lcp;
+                    child.len -= lcp;
+                    let child_dir = child.prefix >> 63;
                     self.nodes[idx].children[dir] = self.len() as u32;
-                    let child = &mut self.nodes[child_idx];
-                    let new_prefix = child.prefix >> (64-len) << (64-len);
-                    child.prefix <<= len;
-                    child.len -= len as u8;
-                    let prefix = child.prefix;
                     self.nodes.push(BinaryRadixTreeNode {
-                        prefix: new_prefix,
-                        len: len as u8,
-                        children: if prefix >> 63 == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
+                        prefix: key.bits,
+                        len: lcp,
+                        children: if child_dir == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
                         value: M::identity(),
                         aggregate: M::identity(),
                     });
-
-                    self.modify_rec(&key[len..], f, self.len()-1);
+                    
+                    key.advance(lcp);
+                    self.modify_rec(key, f, self.len()-1);
                 }
             }
         }
@@ -369,15 +424,15 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         self.update(idx);
     }
 
-    pub fn set(&mut self, key: &RadixKey, value: M::S) {
-        self.modify(key, |_| value);
+    pub fn set(&mut self, key: &[usize], len: usize, value: M::S) {
+        self.modify(key, len, |_| value);
     }
 
-    pub fn prod<'a, R: std::ops::RangeBounds<&'a RadixKey>>(&self, range: R) -> M::S {
-        self.prod_rec(range.start_bound().cloned(), range.end_bound().cloned(), 0)
+    pub fn prod<'a, R: std::ops::RangeBounds<(&'a [usize], usize)>>(&self, range: R) -> M::S {
+        self.prod_rec(range.start_bound().cloned().map(|(key, len)| RadixKey::new(key, len)), range.end_bound().cloned().map(|(key, len)| RadixKey::new(key, len)), 0)
     }
 
-    fn prod_rec(&self, left: std::ops::Bound<&RadixKey>, right: std::ops::Bound<&RadixKey>, idx: usize) -> M::S {
+    fn prod_rec(&self, left: std::ops::Bound<RadixKey>, right: std::ops::Bound<RadixKey>, idx: usize) -> M::S {
         use std::ops::Bound::*;
 
         if let Excluded(key) = right && key.is_empty() {
@@ -405,11 +460,12 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             let Some(child) = self.nodes.get(child_idx as usize) else { continue; };
             
             let new_left = match left {
-                Included(key) | Excluded(key) => {
+                Included(mut key) | Excluded(mut key) => {
                     let lcp = child.lcp(key);
-                    if child.len as usize == lcp {
-                        left.map(|_| &key[child.len as usize..])
-                    } else if lcp == key.len() || !key[lcp] {
+                    if lcp == child.len {
+                        key.advance(lcp);
+                        left.map(|_| key)
+                    } else if lcp == key.len || !key.is_one(lcp) {
                         Unbounded
                     } else {
                         continue;
@@ -419,11 +475,12 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             };
 
             let new_right = match right {
-                Included(key) | Excluded(key) => {
+                Included(mut key) | Excluded(mut key) => {
                     let lcp = child.lcp(key);
-                    if child.len as usize == lcp {
-                        right.map(|_| &key[child.len as usize..])
-                    } else if lcp == key.len() || !key[lcp] {
+                    if lcp == child.len {
+                        key.advance(lcp);
+                        right.map(|_| key)
+                    } else if lcp == key.len || !key.is_one(lcp) {
                         continue;
                     } else {
                         Unbounded
@@ -439,17 +496,18 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         r
     }
 
-    pub fn prod_prefix(&self, mut key: &RadixKey) -> M::S {
-        let mut idx = 0;
+    pub fn prod_prefix(&self, key: &[usize], len: usize) -> M::S {
+        let mut key = RadixKey::new(key, len);
+        let mut node = &self.nodes[0];
         let mut acc = M::identity();
         loop {
-            acc = M::binary_operation(&acc, &self.nodes[idx].value);
+            acc = M::binary_operation(&acc, &node.value);
             if key.is_empty() { break; }
             
-            let child_idx = self.nodes[idx].children[key[0] as usize] as usize;
+            let child_idx = node.children[key.dir()] as usize;
             if let Some(child) = self.nodes.get(child_idx) && child.is_prefix(key) {
-                idx = child_idx;
-                key = &key[child.len as usize..];
+                key.advance(child.len);
+                node = child;
             } else {
                 break;
             }
@@ -458,14 +516,12 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         acc
     }
     
-    pub fn max_right(&self, left: &RadixKey, f: impl Fn(&M::S) -> bool) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
+    pub fn max_right(&self, left: (&[usize], usize), f: impl Fn(&M::S) -> bool) -> Option<(Vec<usize>, usize)> {
         assert!(f(&M::identity()));
-        self.max_right_rec(left, &f, 0, &mut M::identity(), 0)
+        self.max_right_rec(RadixKey::new(left.0, left.1), &f, 0, &mut M::identity(), 0)
     }
 
-    fn max_right_rec(&self, left: &RadixKey, f: &impl Fn(&M::S) -> bool, idx: usize, acc: &mut M::S, depth: usize) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
-        use bitvec::field::BitField;
-        use bitvec::prelude::{BitVec, BitSlice};
+    fn max_right_rec(&self, left: RadixKey, f: &impl Fn(&M::S) -> bool, idx: usize, acc: &mut M::S, depth: usize) -> Option<(Vec<usize>, usize)> {
         let node = &self.nodes[idx];
         if left.is_empty() {
             let new_acc = M::binary_operation(acc, &node.aggregate);
@@ -476,11 +532,7 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
 
             let new_acc = M::binary_operation(acc, &node.value);
             if !f(&new_acc) {
-                let mut v = BitVec::repeat(false, depth);
-                if node.len > 0 {
-                    v[depth-node.len as usize..depth].store_be(node.prefix >> (64-node.len));
-                }
-                return Some(v);
+                return Some((vec![0; depth.div_ceil(64)], depth));
             }
             *acc = new_acc;
         }
@@ -489,19 +541,19 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
             let Some(child) = self.nodes.get(child_idx as usize) else { continue; };
             let lcp = child.lcp(left);
             let new_left =
-                if child.len as usize == lcp {
-                    &left[lcp..]
-                } else if lcp == left.len() || !left[lcp] {
-                    BitSlice::empty()
+                if lcp == child.len {
+                    let mut new_left = left;
+                    new_left.advance(lcp);
+                    new_left
+                } else if lcp == left.len || !left.is_one(lcp) {
+                    RadixKey::empty()
                 } else {
                     continue;
                 };
 
-            if let Some(mut v) = self.max_right_rec(new_left, f, child_idx as usize, acc, depth+child.len as usize) {
-                if node.len > 0 {
-                    v[depth-node.len as usize..depth].store_be(node.prefix >> (64-node.len));
-                }
-                return Some(v);
+            if let Some((mut v, len)) = self.max_right_rec(new_left, f, child_idx as usize, acc, depth+child.len as usize) {
+                v[depth/64] |= (child.prefix >> (64-child.len)) << (64 - depth as u8 % 64 - child.len);
+                return Some((v, len));
             }
         }
 
@@ -537,30 +589,29 @@ impl<M: ac_library::Monoid> RadixTree<M> {
     }
     
     pub fn get(&self, key: &[usize]) -> M::S {
-        self.tree.get(bitvec::prelude::BitSlice::from_slice(key))
+        self.tree.get(key, key.len()*64)
     }
     
     pub fn modify(&mut self, key: &[usize], f: impl FnOnce(&M::S) -> M::S) {
-        self.tree.modify(bitvec::prelude::BitSlice::from_slice(key), f);
+        self.tree.modify(key, key.len()*64, f);
     }
 
     pub fn set(&mut self, key: &[usize], value: M::S) {
-        self.tree.set(bitvec::prelude::BitSlice::from_slice(key), value);
+        self.tree.set(key, key.len()*64, value);
     }
 
     pub fn prod<'a, R: std::ops::RangeBounds<&'a [usize]>>(&self, range: R) -> M::S {
-        use bitvec::prelude::BitSlice;
-        let start = range.start_bound().cloned().map(BitSlice::from_slice);
-        let end = range.end_bound().cloned().map(BitSlice::from_slice);
+        let start = range.start_bound().cloned().map(|key| (key, key.len()*64));
+        let end = range.end_bound().cloned().map(|key| (key, key.len()*64));
         self.tree.prod((start, end))
     }
     
     pub fn prod_prefix(&self, key: &[usize]) -> M::S {
-        self.tree.prod_prefix(bitvec::prelude::BitSlice::from_slice(key))
+        self.tree.prod_prefix(key, key.len()*64)
     }
 
     pub fn max_right(&self, left: &[usize], f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
-        self.tree.max_right(bitvec::prelude::BitSlice::from_slice(left), f).map(|v| v.into_vec())
+        self.tree.max_right((left, left.len()*64), f).map(|(key, _)| key)
     }
 }
 
@@ -591,13 +642,14 @@ pub trait BinaryRadixTreeRef {
 pub struct BinaryRadixTreeCursorBase<T: BinaryRadixTreeRef> {
     tree: T,
     path: Vec<u32>,
-    key: bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>,
+    key: Vec<usize>,
+    len: usize,
     extra_len: usize
 }
 
 impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBase<T> {
-    pub fn key(&self) -> &bitvec::prelude::BitSlice<usize, bitvec::prelude::Msb0> {
-        &self.key
+    pub fn key(&self) -> (&[usize], usize) {
+        (&self.key, self.len)
     }
 
     pub fn value(&self) -> M::S {
@@ -613,23 +665,25 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBas
         let idx = *self.path.last().unwrap() as usize;
         if self.extra_len == 0 {
             tree.nodes[idx].aggregate.clone()
-        } else {
-            let key = &self.key[self.key.len()-self.extra_len..];
-            let child_idx = tree.nodes[idx].children[key[0] as usize] as usize;
-            if let Some(child) = tree.nodes.get(child_idx) && child.lcp(key) == key.len() {
+        } else if self.extra_len < 64 {
+            let key = RadixKey::from_range(&self.key, self.len-self.extra_len, self.len);
+            let child_idx = tree.nodes[idx].children[key.dir()] as usize;
+            if let Some(child) = tree.nodes.get(child_idx) && child.lcp(key) == key.len {
                 child.aggregate.clone()
             } else {
                 M::identity()
             }
+        } else {
+            M::identity()
         }
     }
 
     pub fn up(&mut self, mut bits: usize) {
-        assert!(bits <= self.key.len());
-        self.key.resize(self.key.len()-bits, false);
+        assert!(bits <= self.len);
 
         let min = bits.min(self.extra_len);
         bits -= min;
+        self.len -= min;
         self.extra_len -= min;
 
         while bits != 0 {
@@ -638,21 +692,27 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBas
 
             let min = bits.min(self.extra_len);
             bits -= min;
+            self.len -= min;
             self.extra_len -= min;
             self.tree.update(*self.path.last().unwrap() as usize);
+        }
+        
+        self.key.resize(self.len.div_ceil(64), 0);
+        if let Some(last) = self.key.last_mut() {
+            *last &= (!0usize).wrapping_shl((self.len as u32).wrapping_neg());
         }
     }
     
     fn update_path(&mut self) {
         let tree = self.tree.tree();
-        let mut key = &self.key[self.key.len()-self.extra_len..];
+        let mut key = RadixKey::from_range(&self.key, self.len-self.extra_len, self.len);
         let mut idx = *self.path.last().unwrap() as usize;
 
         while !key.is_empty() {
-            let child_idx = tree.nodes[idx].children[key[0] as usize];
+            let child_idx = tree.nodes[idx].children[key.dir()];
             if let Some(child) = tree.nodes.get(child_idx as usize) && child.is_prefix(key) {
                 self.path.push(child_idx);
-                key = &key[child.len as usize..];
+                key.advance(child.len);
                 idx = child_idx as usize;
                 self.extra_len -= child.len as usize;
             } else {
@@ -662,18 +722,30 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBas
     }
 
     pub fn down(&mut self, dir: bool) {
-        self.key.push(dir);
+        if self.len.is_multiple_of(64) {
+            self.key.push((dir as usize) << 63);
+        } else {
+            *self.key.last_mut().unwrap() |= (dir as usize).wrapping_shl(!self.len as u32);
+        }
+        self.len += 1;
         self.extra_len += 1;
         self.update_path()
     }
     
-    /// 下位bitsビット
+    /// 上位bitsビット
     pub fn down_bits(&mut self, key: usize, bits: usize) {
-        use bitvec::field::BitField;
         if bits == 0 { return; }
-        let len = self.key.len();
-        self.key.resize(len+bits, false);
-        self.key[len..].store_be(key);
+        let key = key & (!0usize).wrapping_shl((bits as u32).wrapping_neg());
+        if self.len.is_multiple_of(64) {
+            self.key.push(key);
+        } else {
+            *self.key.last_mut().unwrap() |= key.wrapping_shr(self.len as u32);
+            if self.len % 64 + bits > 64 {
+                self.key.push(key.wrapping_shl((self.len as u32).wrapping_neg()));
+            }
+        }
+        
+        self.len += bits;
         self.extra_len += bits;
         self.update_path();
     }
@@ -686,7 +758,7 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBas
 impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> Drop for BinaryRadixTreeCursorBase<T> {
     fn drop(&mut self) {
         if T::IS_MUT {
-            self.up(self.key.len());
+            self.up(self.len);
         }
     }
 }
@@ -720,18 +792,18 @@ pub type BinaryRadixTreeCursorMut<'a, M> = BinaryRadixTreeCursorBase<&'a mut Bin
 impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursorMut<'a, M> {
     pub fn modify(&mut self, f: impl FnOnce(&M::S) -> M::S) {
         if self.extra_len != 0 {
-            let mut key = &self.key[self.key.len()-self.extra_len..];
+            let mut key = RadixKey::from_range(&self.key, self.len-self.extra_len, self.len);
             self.tree.modify_rec(key, f, *self.path.last().unwrap() as usize);
             let mut node = &self.tree.nodes[*self.path.last().unwrap() as usize];
             while !key.is_empty() {
-                let child_idx = node.children[key[0] as usize];
+                let child_idx = node.children[key.dir()];
                 self.path.push(child_idx);
                 node = &self.tree.nodes[child_idx as usize];
-                key = &key[node.len as usize..];
+                key.advance(node.len);
             }
             self.extra_len = 0;
         } else {
-            self.tree.modify_rec(bitvec::prelude::BitSlice::empty(), f, *self.path.last().unwrap() as usize);
+            self.tree.modify_rec(RadixKey::empty(), f, *self.path.last().unwrap() as usize);
         }
     }
 
@@ -753,7 +825,7 @@ pub type RadixTreeCursorMut<'a, M> = RadixTreeCursorBase<&'a mut BinaryRadixTree
 
 impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> RadixTreeCursorBase<T>  {
     pub fn key(&self) -> &[usize] {
-        self.binary_cursor.key.as_raw_slice()
+        &self.binary_cursor.key
     }
 
     pub fn value(&self) -> M::S {
@@ -789,7 +861,8 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         BinaryRadixTreeCursor {
             tree: self,
             path: vec![0],
-            key: bitvec::prelude::BitVec::new(),
+            key: vec![],
+            len: 0,
             extra_len: 0,
         }
     }
@@ -798,7 +871,8 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         BinaryRadixTreeCursorMut {
             tree: self,
             path: vec![0],
-            key: bitvec::prelude::BitVec::new(),
+            key: vec![],
+            len: 0,
             extra_len: 0,
         }
     }
@@ -928,12 +1002,10 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
             }
         }
         
-        Self::max_right_y_rec(bitvec::prelude::BitSlice::from_slice(left), &f, &trees, len, &mut M::identity(), 0, 0, 0).map(|v| v.into_vec())
+        Self::max_right_y_rec(RadixKey::new(left, left.len()*64), &f, &trees, len, &mut M::identity(), 0)
     }
 
-    fn max_right_y_rec(left: &RadixKey, f: &impl Fn(&M::S) -> bool, trees: &[RadixState<M>; 64], count: usize, acc: &mut M::S, prefix: u64, len: usize, depth: usize) -> Option<bitvec::prelude::BitVec<usize, bitvec::prelude::Msb0>> {
-        use bitvec::field::BitField;
-        use bitvec::prelude::{BitVec, BitSlice};
+    fn max_right_y_rec(left: RadixKey, f: &impl Fn(&M::S) -> bool, trees: &[RadixState<M>; 64], count: usize, acc: &mut M::S, depth: usize) -> Option<Vec<usize>> {
         if count == 0 { return None; }
         
         if left.is_empty() {
@@ -950,11 +1022,7 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
                 let prod = M::binary_operation(acc, head);
                 let new_acc = values.fold(prod, |prod, val| M::binary_operation(&prod, val));
                 if !f(&new_acc) {
-                    let mut v = BitVec::repeat(false, depth);
-                    if len > 0 {
-                        v[depth-len..depth].store_be(prefix >> (64-len));
-                    }
-                    return Some(v);
+                    return Some(vec![0; depth.div_ceil(64)]);
                 }
                 *acc = new_acc;
             }
@@ -967,7 +1035,7 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
                 let tree = &trees[i];
                 let node = &tree.nodes[tree.idx as usize];
                 if tree.skip < node.len {
-                    if (node.prefix >> (63-tree.skip)) & 1 != dir as u64 {
+                    if (node.prefix << tree.skip) >> 63 != dir {
                         new_count -= 1;
                         trees.swap(i, new_count);
                     }
@@ -986,39 +1054,38 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
             
             if new_count == 0 { continue; }
             
-            let mut skip = u32::MAX;
+            let mut skip = u8::MAX;
             let tree0 = trees[0];
             let p = tree0.nodes[tree0.idx as usize].prefix << tree0.skip;
             for tree in &trees[..new_count] {
                 let node = &tree.nodes[tree.idx as usize];
                 skip = skip.min(
-                    ((node.prefix << tree.skip) ^ p).leading_zeros().min((node.len-tree.skip) as u32)
+                    (((node.prefix << tree.skip) ^ p).leading_zeros() as u8).min(node.len-tree.skip)
                 );
             }
             
             for tree in &mut trees[..new_count] {
-                tree.skip += skip as u8;
+                tree.skip += skip;
             }
             
-            let next_left =
+            let new_left =
                 if left.is_empty() {
-                    BitSlice::empty()
+                    RadixKey::empty()
                 } else {
-                    let size = left.len().min(skip as usize);
-                    let lcp = ((p ^ (left[..size].load_be::<u64>() << (64-size))).leading_zeros() as usize).min(size);
-                    if lcp == skip as usize {
-                        &left[skip as usize..]
-                    } else if lcp == left.len() || !left[lcp] {
-                        BitSlice::empty()
+                    let lcp = ((p ^ left.bits).leading_zeros() as u8).min(skip).min(left.len);
+                    if lcp == skip { 
+                        let mut new_left = left ;
+                        new_left.advance(skip);
+                        new_left
+                    } else if lcp == left.len || !left.is_one(lcp) {
+                        RadixKey::empty()
                     } else {
                         continue;
                     }
                 };
             
-            if let Some(mut v) = Self::max_right_y_rec(next_left, f, &trees, new_count, acc, p, skip as usize, depth+skip as usize) {
-                if len > 0 {
-                    v[depth-len..depth].store_be(prefix >> (64-len));
-                }
+            if let Some(mut v) = Self::max_right_y_rec(new_left, f, &trees, new_count, acc, depth+skip as usize) {
+                v[depth/64] |= (p >> (64-skip)) << (64 - depth as u8 % 64 - skip);
                 return Some(v);
             }
         }
