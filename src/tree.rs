@@ -360,26 +360,31 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         }
     }
     
-    fn update(&mut self, idx: usize) {
-        let node = &self.nodes[idx];
+    #[inline(always)]
+    fn update_node(nodes: &mut [BinaryRadixTreeNode<M>], idx: usize) {
+        let node = &nodes[idx];
         let mut agg = node.value.clone();
         for child_idx in node.children {
-            if let Some(child) = self.nodes.get(child_idx as usize) {
+            if let Some(child) = nodes.get(child_idx as usize) {
                 agg = M::binary_operation(&agg, &child.aggregate);
             }
         }
-        
-        self.nodes[idx].aggregate = agg;
+
+        nodes[idx].aggregate = agg;
+    }
+    
+    fn update(&mut self, idx: usize) {
+        Self::update_node(&mut self.nodes, idx);
     }
 
-    pub fn modify(&mut self, key: &[usize], len: usize, f: impl FnOnce(&M::S) -> M::S) {
-        self.modify_rec(RadixKey::new(key, len), f, 0);
+    fn modify_with_update(&mut self, key: &[usize], len: usize, f: impl FnOnce(&M::S) -> M::S, mut update: impl FnMut(&mut [BinaryRadixTreeNode<M>], usize)) {
+        self.modify_rec(RadixKey::new(key, len), |v| *v = f(v), 0, &mut update)
     }
 
-    fn modify_rec(&mut self, mut key: RadixKey, f: impl FnOnce(&M::S) -> M::S, idx: usize) {
+    fn modify_rec(&mut self, mut key: RadixKey, f: impl FnOnce(&mut M::S), idx: usize, update: &mut impl FnMut(&mut [BinaryRadixTreeNode<M>], usize)) {
         let node = &mut self.nodes[idx];
         if key.is_empty() { 
-            node.value = f(&node.value);
+            f(&mut node.value);
         } else {
             let dir = key.dir();
             let child_idx = node.children[dir] as usize;
@@ -394,34 +399,39 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
                     aggregate: M::identity(),
                 });
                 key.advance(key.len);
-                self.modify_rec(key, f, self.len()-1);
+                self.modify_rec(key, f, self.len()-1, update);
             } else {
                 let child = &mut self.nodes[child_idx];
                 let lcp = child.lcp(key);
 
                 if lcp == child.len {
                     key.advance(lcp);
-                    self.modify_rec(key, f, child_idx);
+                    self.modify_rec(key, f, child_idx, update);
                 } else {
                     child.prefix <<= lcp;
                     child.len -= lcp;
                     let child_dir = child.prefix >> 63;
+                    let child_agg = child.aggregate.clone();
                     self.nodes[idx].children[dir] = self.len() as u32;
                     self.nodes.push(BinaryRadixTreeNode {
                         prefix: key.bits,
                         len: lcp,
                         children: if child_dir == 1 { [u32::MAX, child_idx as u32] } else { [child_idx as u32, u32::MAX] },
                         value: M::identity(),
-                        aggregate: M::identity(),
+                        aggregate: child_agg,
                     });
                     
                     key.advance(lcp);
-                    self.modify_rec(key, f, self.len()-1);
+                    self.modify_rec(key, f, self.len()-1, update);
                 }
             }
         }
         
-        self.update(idx);
+        update(&mut self.nodes, idx);
+    }
+
+    pub fn modify(&mut self, key: &[usize], len: usize, f: impl FnOnce(&M::S) -> M::S) {
+        self.modify_with_update(key, len, f, Self::update_node);
     }
 
     pub fn set(&mut self, key: &[usize], len: usize, value: M::S) {
@@ -516,12 +526,12 @@ impl<M: ac_library::Monoid> BinaryRadixTree<M> {
         acc
     }
     
-    pub fn max_right(&self, left: (&[usize], usize), f: impl Fn(&M::S) -> bool) -> Option<(Vec<usize>, usize)> {
+    pub fn max_right(&self, left: (&[usize], usize), mut f: impl FnMut(&M::S) -> bool) -> Option<(Vec<usize>, usize)> {
         assert!(f(&M::identity()));
-        self.max_right_rec(RadixKey::new(left.0, left.1), &f, 0, &mut M::identity(), 0)
+        self.max_right_rec(RadixKey::new(left.0, left.1), &mut f, 0, &mut M::identity(), 0)
     }
 
-    fn max_right_rec(&self, left: RadixKey, f: &impl Fn(&M::S) -> bool, idx: usize, acc: &mut M::S, depth: usize) -> Option<(Vec<usize>, usize)> {
+    fn max_right_rec(&self, left: RadixKey, f: &mut impl FnMut(&M::S) -> bool, idx: usize, acc: &mut M::S, depth: usize) -> Option<(Vec<usize>, usize)> {
         let node = &self.nodes[idx];
         if left.is_empty() {
             let new_acc = M::binary_operation(acc, &node.aggregate);
@@ -636,6 +646,10 @@ pub trait BinaryRadixTreeRef {
     const IS_MUT: bool;
     fn tree(&self) -> &BinaryRadixTree<Self::M>;
     fn update(&mut self, _idx: usize) {}
+}
+
+pub trait BinaryRadixTreeRefMut: BinaryRadixTreeRef {
+    fn tree_mut(&mut self) -> &mut BinaryRadixTree<Self::M>;
 }
 
 #[derive(Clone)]
@@ -755,11 +769,45 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> BinaryRadixTreeCursorBas
     }
 }
 
+impl<M: ac_library::Monoid, T: BinaryRadixTreeRefMut<M=M>> BinaryRadixTreeCursorBase<T> {
+    pub fn modify(&mut self, f: impl FnOnce(&M::S) -> M::S) {
+        if self.extra_len != 0 {
+            let mut key = RadixKey::from_range(&self.key, self.len-self.extra_len, self.len);
+            self.tree.tree_mut().modify_rec(key, |v| *v = f(v), *self.path.last().unwrap() as usize, &mut |_, _| {});
+            let mut node = &self.tree.tree_mut().nodes[*self.path.last().unwrap() as usize];
+            while !key.is_empty() {
+                let child_idx = node.children[key.dir()];
+                self.path.push(child_idx);
+                node = &self.tree.tree_mut().nodes[child_idx as usize];
+                key.advance(node.len);
+            }
+            self.extra_len = 0;
+        } else {
+            self.tree.tree_mut().modify_rec(RadixKey::empty(), |v| *v = f(v), *self.path.last().unwrap() as usize, &mut |_, _| {});
+        }
+        
+        self.tree.update(*self.path.last().unwrap() as usize)
+    }
+
+    pub fn set(&mut self, value: M::S) {
+        self.modify(|_| value);
+    }
+}
+
 impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> Drop for BinaryRadixTreeCursorBase<T> {
     fn drop(&mut self) {
         if T::IS_MUT {
             self.up(self.len);
         }
+    }
+}
+
+impl<M: ac_library::Monoid> BinaryRadixTreeRef for &BinaryRadixTree<M> {
+    type M = M;
+    const IS_MUT: bool = false;
+
+    fn tree(&self) -> &BinaryRadixTree<M> {
+        self
     }
 }
 
@@ -776,11 +824,8 @@ impl<M: ac_library::Monoid> BinaryRadixTreeRef for &mut BinaryRadixTree<M> {
     }
 }
 
-impl<M: ac_library::Monoid> BinaryRadixTreeRef for &BinaryRadixTree<M> {
-    type M = M;
-    const IS_MUT: bool = false;
-
-    fn tree(&self) -> &BinaryRadixTree<M> {
+impl<M: ac_library::Monoid> BinaryRadixTreeRefMut for &mut BinaryRadixTree<M> {
+    fn tree_mut(&mut self) -> &mut BinaryRadixTree<Self::M> {
         self
     }
 }
@@ -789,39 +834,11 @@ pub type BinaryRadixTreeCursor<'a, M> = BinaryRadixTreeCursorBase<&'a BinaryRadi
 
 pub type BinaryRadixTreeCursorMut<'a, M> = BinaryRadixTreeCursorBase<&'a mut BinaryRadixTree<M>>;
 
-impl<'a, M: ac_library::Monoid> BinaryRadixTreeCursorMut<'a, M> {
-    pub fn modify(&mut self, f: impl FnOnce(&M::S) -> M::S) {
-        if self.extra_len != 0 {
-            let mut key = RadixKey::from_range(&self.key, self.len-self.extra_len, self.len);
-            self.tree.modify_rec(key, f, *self.path.last().unwrap() as usize);
-            let mut node = &self.tree.nodes[*self.path.last().unwrap() as usize];
-            while !key.is_empty() {
-                let child_idx = node.children[key.dir()];
-                self.path.push(child_idx);
-                node = &self.tree.nodes[child_idx as usize];
-                key.advance(node.len);
-            }
-            self.extra_len = 0;
-        } else {
-            self.tree.modify_rec(RadixKey::empty(), f, *self.path.last().unwrap() as usize);
-        }
-    }
-
-    pub fn set(&mut self, value: M::S) {
-        self.modify(|_| value);
-    }
-}
 
 #[derive(Clone)]
 pub struct RadixTreeCursorBase<T: BinaryRadixTreeRef> {
     binary_cursor: BinaryRadixTreeCursorBase<T>,
 }
-
-pub type RadixTreeCursor<'a, M> = RadixTreeCursorBase<&'a BinaryRadixTree<M>>;
-
-// https://atcoder.jp/contests/abc353/submissions/79323824
-pub type RadixTreeCursorMut<'a, M> = RadixTreeCursorBase<&'a mut BinaryRadixTree<M>>;
-
 
 impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> RadixTreeCursorBase<T>  {
     pub fn key(&self) -> &[usize] {
@@ -843,17 +860,30 @@ impl<M: ac_library::Monoid, T: BinaryRadixTreeRef<M=M>> RadixTreeCursorBase<T>  
     pub fn down(&mut self, dir: usize) {
         self.binary_cursor.down_usize(dir);
     }
+
+    pub fn down_slice(&mut self, slice: &[usize]) {
+        self.binary_cursor.key.extend_from_slice(slice);
+        self.binary_cursor.len += slice.len()*64;
+        self.binary_cursor.extra_len += slice.len()*64;
+        self.binary_cursor.update_path();
+    }
 }
 
-impl<'a, M: ac_library::Monoid> RadixTreeCursorMut<'a, M> {
+impl<M: ac_library::Monoid, T: BinaryRadixTreeRefMut<M=M>> RadixTreeCursorBase<T> {
     pub fn modify(&mut self, f: impl FnOnce(&M::S) -> M::S) {
         self.binary_cursor.modify(f);
     }
-    
+
     pub fn set(&mut self, value: M::S) {
         self.binary_cursor.set(value);
     }
 }
+
+pub type RadixTreeCursor<'a, M> = RadixTreeCursorBase<&'a BinaryRadixTree<M>>;
+
+// https://atcoder.jp/contests/abc353/submissions/79323824
+pub type RadixTreeCursorMut<'a, M> = RadixTreeCursorBase<&'a mut BinaryRadixTree<M>>;
+
 
 
 impl<M: ac_library::Monoid> BinaryRadixTree<M> {
@@ -895,8 +925,7 @@ impl<M: ac_library::Monoid> RadixTree<M> {
 
 struct RadixState<'a, M: ac_library::Monoid> {
     nodes: &'a [BinaryRadixTreeNode<M>],
-    idx: u32,
-    skip: u8,
+    range: (u8, u8),
 }
 
 impl<'a, M: ac_library::Monoid> Clone for RadixState<'a, M> {
@@ -909,44 +938,94 @@ impl<'a, M: ac_library::Monoid> Copy for RadixState<'a, M> {
     
 }
 
-pub struct SegRadixTree<M: ac_library::Monoid> {
-    trees: Vec<RadixTree<M>>
+struct PowMonoid<M, const K: usize>(std::marker::PhantomData<M>);
+
+impl<M: ac_library::Monoid, const K: usize> ac_library::Monoid for PowMonoid<M, K> {
+    type S = [M::S; K];
+
+    fn identity() -> Self::S {
+        std::array::from_fn(|_| M::identity())
+    }
+
+    fn binary_operation(a: &Self::S, b: &Self::S) -> Self::S {
+        std::array::from_fn(|i| M::binary_operation(&a[i], &b[i]))
+    }
 }
 
-impl<M: ac_library::Monoid> SegRadixTree<M> {
+pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: usize = 20> {
+    trees: Vec<RadixTree<PowMonoid<M, K>>>,
+    x_len: usize,
+}
+
+impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K, SEG> {
     pub fn new(x_len: usize) -> Self {
+        const {
+            assert!(K.saturating_pow(SEG as u32 / 2) >= (1<<30))
+        }
+        let mut pow = K;
+        while pow < x_len {
+            pow *= K;
+        }
         Self {
-            trees: vec![RadixTree::new(); 2*x_len],
+            trees: vec![RadixTree::new(); (pow-1)/(K-1)],
+            x_len,
         }
     }
 
-    fn len(&self) -> usize {
-        self.trees.len() / 2
+    pub fn len(&self) -> usize {
+        self.x_len
     }
 
     pub fn get(&self, x: usize, y: &[usize]) -> M::S {
-        self.trees[self.len()+x].get(y)
+        let idx = (self.trees.len()+x-1)/K;
+        self.trees[idx].get(y)[x%K].clone()
     }
 
     pub fn modify(&mut self, x: usize, y: &[usize], f: impl FnOnce(&M::S) -> M::S) {
-        let mut idx = self.len()+x;
-        let mut val = None;
-        self.trees[idx].modify(y, |v| {
-            val = Some(f(v));
-            val.clone().unwrap()
-        });
-        let mut val = val.unwrap();
+        let mut idx = self.trees.len()+x;
+        let mut prod = None;
+        {
+            self.trees[(idx-1)/K].tree.modify_rec(RadixKey::new(y, y.len()*64), |v| {
+                v[(idx-1)%K] = f(&v[(idx-1)%K]);
+                let mut p = M::binary_operation(&v[0], &v[1]);
+                for i in 2..K {
+                    p = M::binary_operation(&p, &v[i]);
+                }
+                prod = Some(p);
+            }, 0, &mut |nodes, i| {
+                let node = &nodes[i];
+                let mut agg = node.value[(idx-1)%K].clone();
+                for child_idx in node.children {
+                    if let Some(child) = nodes.get(child_idx as usize) {
+                        agg = M::binary_operation(&agg, &child.aggregate[(idx-1)%K]);
+                    }
+                }
+                
+                nodes[i].aggregate[(idx-1)%K] = agg;
+            });
+            idx = (idx-1)/K;
+        };
+        let mut prod = prod.unwrap();
         
-        while idx > 1 {
-            val =
-                if idx.is_multiple_of(2) {
-                    M::binary_operation(&val, &self.trees[idx+1].get(y))
-                } else {
-                    M::binary_operation(&self.trees[idx-1].get(y), &val)
-                };
-            
-            idx /= 2;
-            self.trees[idx].set(y, val.clone());
+        while idx > 0 {
+            self.trees[(idx-1)/K].tree.modify_rec(RadixKey::new(y, y.len()*64), |v| {
+                v[(idx-1)%K] = prod.clone();
+                let mut p = M::binary_operation(&v[0], &v[1]);
+                for i in 2..K {
+                    p = M::binary_operation(&p, &v[i]);
+                }
+                prod = p;
+            }, 0, &mut |nodes, i| {
+                let node = &nodes[i];
+                let mut agg = node.value[(idx-1)%K].clone();
+                for child_idx in node.children {
+                    if let Some(child) = nodes.get(child_idx as usize) {
+                        agg = M::binary_operation(&agg, &child.aggregate[(idx-1)%K]);
+                    }
+                }
+                nodes[i].aggregate[(idx-1)%K] = agg;
+            });
+            idx = (idx-1)/K;
         }
     }
 
@@ -956,126 +1035,179 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
 
     pub fn prod<'a, R: std::ops::RangeBounds<&'a [usize]>>(&self, x_range: impl std::ops::RangeBounds<usize>, y_range: R) -> M::S {
         use std::collections::Bound::*;
-        let xl = match x_range.start_bound() {
+        let mut xl = match x_range.start_bound() {
             Included(&xl) => xl,
             Excluded(&xl) => xl+1,
             Unbounded => 0,
         };
-        let xr = match x_range.end_bound() {
+        let mut xr = match x_range.end_bound() {
             Included(&xr) => xr+1,
             Excluded(&xr) => xr,
             Unbounded => self.len(),
         };
         assert!(xl <= xr && xr <= self.len());
+        
+        xl += self.trees.len();
+        xr += self.trees.len();
 
         let mut r = M::identity();
-        for i in split_segments(self.len(), xl, xr) {
-            r = M::binary_operation(&r, &self.trees[i].prod((y_range.start_bound(), y_range.end_bound())))
+        while (xl-1)/K < (xr-1)/K {
+            if (xl-1)%K != 0 || xl == 1 {
+                let l_prod = self.trees[(xl-1)/K].prod((y_range.start_bound(), y_range.end_bound()));
+                for p in &l_prod[(xl-1)%K..K] {
+                    r = M::binary_operation(&r, p);
+                }
+                xl = (xl-1)/K+1;
+            } else {
+                xl = (xl-1)/K;
+            }
+            
+            if (xr-1)%K != 0 {
+                let r_prod = self.trees[(xr-1)/K].prod((y_range.start_bound(), y_range.end_bound()));
+                for p in &r_prod[0..(xr-1)%K] {
+                    r = M::binary_operation(&r, p);
+                }
+            }
+            xr = (xr-1)/K;
+        }
+        if xl < xr {
+            let prod = self.trees[(xl-1)/K].prod((y_range.start_bound(), y_range.end_bound()));
+            for p in &prod[(xl-1)%K..(xr-1)%K] {
+                r = M::binary_operation(&r, p);
+            }
         }
 
         r
     }
-
-    pub fn max_right_y(&self, x_range: impl std::ops::RangeBounds<usize>, left: &[usize], f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
+    
+    pub fn max_right_y(&self, x_range: impl std::ops::RangeBounds<usize>, left: &[usize], mut f: impl FnMut(&M::S) -> bool) -> Option<Vec<usize>> {
         use std::ops::Bound::*;
         assert!(f(&M::identity()));
-        let xl = match x_range.start_bound() {
+        let mut xl = match x_range.start_bound() {
             Included(&xl) => xl,
             Excluded(&xl) => xl+1,
             Unbounded => 0,
         };
-        let xr = match x_range.end_bound() {
+        let mut xr = match x_range.end_bound() {
             Included(&xr) => xr+1,
             Excluded(&xr) => xr,
             Unbounded => self.len(),
         };
         assert!(xl <= xr && xr <= self.len());
+
+        xl += self.trees.len();
+        xr += self.trees.len();
         
-        let mut trees = [RadixState { nodes: &[], idx: 0, skip: 0, }; 64];
+        let mut trees = [RadixState { nodes: &[], range: (0, 0) }; SEG];
         let mut len = 0;
-        for (i, si) in split_segments(self.len(), xl, xr).enumerate() {
-            len = i+1;
-            trees[i] = RadixState {
-                nodes: &self.trees[si].tree.nodes,
-                idx: 0,
-                skip: 0,
+        while (xl-1)/K < (xr-1)/K {
+            if (xl-1)%K != 0 || xl == 1 {
+                trees[len] = RadixState {
+                    nodes: &self.trees[(xl-1)/K].tree.nodes,
+                    range: (((xl-1)%K) as u8, K as u8),
+                };
+                len += 1;
+                xl = (xl-1)/K+1;
+            } else {
+                xl = (xl-1)/K;
             }
+
+            if (xr-1)%K != 0 {
+                trees[len] = RadixState {
+                    nodes: &self.trees[(xr-1)/K].tree.nodes,
+                    range: (0, ((xr-1)%K) as u8),
+                };
+                len += 1;
+            }
+            xr = (xr-1)/K;
+        }
+        if xl < xr {
+            trees[len] = RadixState {
+                nodes: &self.trees[(xr-1)/K].tree.nodes,
+                range: (((xl-1)%K) as u8, ((xr-1)%K) as u8),
+            };
+            len += 1;
         }
         
-        Self::max_right_y_rec(RadixKey::new(left, left.len()*64), &f, &trees, len, &mut M::identity(), 0)
-    }
-
-    fn max_right_y_rec(left: RadixKey, f: &impl Fn(&M::S) -> bool, trees: &[RadixState<M>; 64], count: usize, acc: &mut M::S, depth: usize) -> Option<Vec<usize>> {
-        if count == 0 { return None; }
+        let mut idx = [u32::MAX; SEG];
+        for i in &mut idx[0..len] {
+            *i = 0;
+        }
         
+        Self::max_right_y_rec(RadixKey::new(left, left.len()*64), &mut f, &trees, &idx, &[0; _], &mut M::identity(), 0)
+    }
+    
+    fn max_right_y_rec(left: RadixKey, f: &mut impl FnMut(&M::S) -> bool, trees: &[RadixState<PowMonoid<M, K>>; SEG], idx: &[u32; SEG], skip: &[u8; SEG], acc: &mut M::S, depth: usize) -> Option<Vec<usize>> {
         if left.is_empty() {
-            let mut aggregates = trees[..count].iter().map(|tree| &tree.nodes[tree.idx as usize].aggregate);
-            let prod = M::binary_operation(acc, aggregates.next().unwrap());
-            let new_acc = aggregates.fold(prod, |prod, agg| M::binary_operation(&prod, agg));
+            let mut new_acc = acc.clone();
+            for i in 0..SEG {
+                if let Some(node) = trees[i].nodes.get(idx[i] as usize) {
+                    new_acc = node.aggregate[trees[i].range.0 as usize..trees[i].range.1 as usize].iter().fold(new_acc, |prod, agg| M::binary_operation(&prod, agg));
+                }
+            }
             if f(&new_acc) {
                 *acc = new_acc;
                 return None;
             }
 
-            let mut values = trees[..count].iter().filter(|tree| tree.skip == tree.nodes[tree.idx as usize].len).map(|tree| &tree.nodes[tree.idx as usize].value);
-            if let Some(head) = values.next() {
-                let prod = M::binary_operation(acc, head);
-                let new_acc = values.fold(prod, |prod, val| M::binary_operation(&prod, val));
-                if !f(&new_acc) {
-                    return Some(vec![0; depth.div_ceil(64)]);
+            let mut new_acc = acc.clone();
+            for i in 0..SEG {
+                if let Some(node) = trees[i].nodes.get(idx[i] as usize) && node.len == skip[i] {
+                    new_acc = node.value[trees[i].range.0 as usize..trees[i].range.1 as usize].iter().fold(new_acc, |prod, agg| M::binary_operation(&prod, agg));
                 }
-                *acc = new_acc;
             }
+            if !f(&new_acc) {
+                return Some(vec![0; depth.div_ceil(64)]);
+            }
+            *acc = new_acc;
         }
         
         for dir in 0..2 {
-            let mut trees = *trees;
-            let mut new_count = count;
-            for i in (0..count).rev() {
+            let mut idx = *idx;
+            let mut skip = *skip;
+            for i in 0..SEG {
                 let tree = &trees[i];
-                let node = &tree.nodes[tree.idx as usize];
-                if tree.skip < node.len {
-                    if (node.prefix << tree.skip) >> 63 != dir {
-                        new_count -= 1;
-                        trees.swap(i, new_count);
+                let Some(node) = tree.nodes.get(idx[i] as usize) else { continue; };
+                let s = skip[i];
+                if s < node.len {
+                    if (node.prefix << s) >> 63 != dir {
+                        idx[i] = u32::MAX;
                     }
                 } else {
                     let child_idx = node.children[dir];
                     if child_idx < u32::MAX {
-                        trees[i].idx = child_idx;
-                        trees[i].skip = 0;
+                        idx[i] = child_idx;
+                        skip[i] = 0;
                     } else {
-                        new_count -= 1;
-                        trees.swap(i, new_count);
-                        
+                        idx[i] = u32::MAX;
                     }
                 }
             }
             
-            if new_count == 0 { continue; }
-            
-            let mut skip = u8::MAX;
-            let tree0 = trees[0];
-            let p = tree0.nodes[tree0.idx as usize].prefix << tree0.skip;
-            for tree in &trees[..new_count] {
-                let node = &tree.nodes[tree.idx as usize];
-                skip = skip.min(
-                    (((node.prefix << tree.skip) ^ p).leading_zeros() as u8).min(node.len-tree.skip)
+            let mut next_skip = u8::MAX;
+            let Some(first_valid) = (0..SEG).find(|&i| idx[i] < u32::MAX) else { continue; };
+            let tree0 = trees[first_valid];
+            let p = tree0.nodes[idx[first_valid] as usize].prefix << skip[first_valid];
+            for i in 0..SEG {
+                let Some(node) = trees[i].nodes.get(idx[i] as usize) else { continue; };
+                let s = skip[i];
+                next_skip = next_skip.min(
+                    (((node.prefix << s) ^ p).leading_zeros() as u8).min(node.len-s)
                 );
             }
             
-            for tree in &mut trees[..new_count] {
-                tree.skip += skip;
+            for i in &mut skip { 
+                *i += next_skip;
             }
             
             let new_left =
                 if left.is_empty() {
                     RadixKey::empty()
                 } else {
-                    let lcp = ((p ^ left.bits).leading_zeros() as u8).min(skip).min(left.len);
-                    if lcp == skip { 
+                    let lcp = ((p ^ left.bits).leading_zeros() as u8).min(next_skip).min(left.len);
+                    if lcp == next_skip { 
                         let mut new_left = left ;
-                        new_left.advance(skip);
+                        new_left.advance(next_skip);
                         new_left
                     } else if lcp == left.len || !left.is_one(lcp) {
                         RadixKey::empty()
@@ -1084,8 +1216,8 @@ impl<M: ac_library::Monoid> SegRadixTree<M> {
                     }
                 };
             
-            if let Some(mut v) = Self::max_right_y_rec(new_left, f, &trees, new_count, acc, depth+skip as usize) {
-                v[depth/64] |= (p >> (64-skip)) << (64 - depth as u8 % 64 - skip);
+            if let Some(mut v) = Self::max_right_y_rec(new_left, f, trees, &idx, &skip, acc, depth+next_skip as usize) {
+                v[depth/64] |= (p >> (64-next_skip)) << (64 - depth as u8 % 64 - next_skip);
                 return Some(v);
             }
         }
