@@ -960,7 +960,8 @@ pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: us
 impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K, SEG> {
     pub fn new(x_len: usize) -> Self {
         const {
-            assert!(K.saturating_pow(SEG as u32 / 2) >= (1<<30))
+            assert!(K.saturating_pow(SEG as u32 / 2) >= (1<<30));
+            assert!(SEG <= 32);
         }
         let mut pow = K;
         while pow < x_len {
@@ -1129,49 +1130,58 @@ impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K,
             len += 1;
         }
         
-        let mut idx = [u32::MAX; SEG];
-        for i in &mut idx[0..len] {
-            *i = 0;
-        }
-        
-        Self::max_right_y_rec(RadixKey::new(left, left.len()*64), &mut f, &trees, &idx, &[0; _], &mut M::identity(), 0)
+        Self::max_right_y_rec(RadixKey::new(left, left.len()*64), &mut f, &trees, &[0; _], &[0; _], (1<<len)-1, &mut M::identity(), 0)
     }
     
-    fn max_right_y_rec(left: RadixKey, f: &mut impl FnMut(&M::S) -> bool, trees: &[RadixState<PowMonoid<M, K>>; SEG], idx: &[u32; SEG], skip: &[u8; SEG], acc: &mut M::S, depth: usize) -> Option<Vec<usize>> {
-        if left.is_empty() {
-            let mut new_acc = acc.clone();
-            for i in 0..SEG {
-                if let Some(node) = trees[i].nodes.get(idx[i] as usize) {
+    fn max_right_y_rec(left: RadixKey, f: &mut impl FnMut(&M::S) -> bool, trees: &[RadixState<PowMonoid<M, K>>; SEG], idx: &[u32; SEG], skip: &[u8; SEG], active: u32, acc: &mut M::S, depth: usize) -> Option<Vec<usize>> {
+        if left.is_empty() { 
+            {
+                let mut new_acc = acc.clone();
+                let mut a = active;
+                while a != 0 {
+                    let i = a.trailing_zeros() as usize;
+                    let node = &trees[i].nodes[idx[i] as usize];
                     new_acc = node.aggregate[trees[i].range.0 as usize..trees[i].range.1 as usize].iter().fold(new_acc, |prod, agg| M::binary_operation(&prod, agg));
+                    a &= a-1;
                 }
-            }
-            if f(&new_acc) {
-                *acc = new_acc;
-                return None;
+                if f(&new_acc) {
+                    *acc = new_acc;
+                    return None;
+                }
             }
 
-            let mut new_acc = acc.clone();
-            for i in 0..SEG {
-                if let Some(node) = trees[i].nodes.get(idx[i] as usize) && node.len == skip[i] {
-                    new_acc = node.value[trees[i].range.0 as usize..trees[i].range.1 as usize].iter().fold(new_acc, |prod, agg| M::binary_operation(&prod, agg));
+            if depth.is_multiple_of(64) {
+                let mut new_acc = acc.clone();
+                let mut a = active;
+                while a != 0 {
+                    let i = a.trailing_zeros() as usize;
+                    let node = &trees[i].nodes[idx[i] as usize];
+                    if node.len == skip[i] {
+                        new_acc = node.value[trees[i].range.0 as usize..trees[i].range.1 as usize].iter().fold(new_acc, |prod, agg| M::binary_operation(&prod, agg));
+                    }
+                    a &= a-1;
                 }
+                if !f(&new_acc) {
+                    return Some(vec![0; depth.div_ceil(64)]);
+                }
+                *acc = new_acc;
             }
-            if !f(&new_acc) {
-                return Some(vec![0; depth.div_ceil(64)]);
-            }
-            *acc = new_acc;
         }
         
         for dir in 0..2 {
+            if !left.is_empty() && dir < left.dir() { continue; }
+            
             let mut idx = *idx;
             let mut skip = *skip;
-            for i in 0..SEG {
-                let tree = &trees[i];
-                let Some(node) = tree.nodes.get(idx[i] as usize) else { continue; };
+            let mut active = active;
+            let mut a = active;
+            while a != 0 {
+                let i = a.trailing_zeros() as usize;
+                let node = &trees[i].nodes[idx[i] as usize];
                 let s = skip[i];
                 if s < node.len {
                     if (node.prefix << s) >> 63 != dir {
-                        idx[i] = u32::MAX;
+                        active ^= 1<<i;
                     }
                 } else {
                     let child_idx = node.children[dir];
@@ -1179,25 +1189,31 @@ impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K,
                         idx[i] = child_idx;
                         skip[i] = 0;
                     } else {
-                        idx[i] = u32::MAX;
+                        active ^= 1<<i;
                     }
                 }
+                a &= a-1;
             }
             
+            if active == 0 { continue; }
+            
             let mut next_skip = u8::MAX;
-            let Some(first_valid) = (0..SEG).find(|&i| idx[i] < u32::MAX) else { continue; };
-            let tree0 = trees[first_valid];
-            let p = tree0.nodes[idx[first_valid] as usize].prefix << skip[first_valid];
-            for i in 0..SEG {
-                let Some(node) = trees[i].nodes.get(idx[i] as usize) else { continue; };
+            let first_active = active.trailing_zeros() as usize;
+            let tree0 = trees[first_active];
+            let p = tree0.nodes[idx[first_active] as usize].prefix << skip[first_active];
+            let mut a = active;
+            while a != 0 {
+                let i = a.trailing_zeros() as usize;
+                let node = &trees[i].nodes[idx[i] as usize];
                 let s = skip[i];
                 next_skip = next_skip.min(
                     (((node.prefix << s) ^ p).leading_zeros() as u8).min(node.len-s)
                 );
+                a &= a-1;
             }
             
-            for i in &mut skip { 
-                *i += next_skip;
+            for i in &mut skip {
+                *i = i.wrapping_add(next_skip);
             }
             
             let new_left =
@@ -1216,7 +1232,7 @@ impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K,
                     }
                 };
             
-            if let Some(mut v) = Self::max_right_y_rec(new_left, f, trees, &idx, &skip, acc, depth+next_skip as usize) {
+            if let Some(mut v) = Self::max_right_y_rec(new_left, f, trees, &idx, &skip, active, acc, depth+next_skip as usize) {
                 v[depth/64] |= (p >> (64-next_skip)) << (64 - depth as u8 % 64 - next_skip);
                 return Some(v);
             }
