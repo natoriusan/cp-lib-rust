@@ -952,7 +952,9 @@ impl<M: ac_library::Monoid, const K: usize> ac_library::Monoid for PowMonoid<M, 
     }
 }
 
-pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: usize = 20> {
+/// 2次元セグ木 \
+/// K, SEGは2冪だと速い
+pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: usize = 16> {
     trees: Vec<RadixTree<PowMonoid<M, K>>>,
     x_len: usize,
 }
@@ -960,13 +962,16 @@ pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: us
 impl<M: ac_library::Monoid, const K: usize, const SEG: usize> SegRadixTree<M, K, SEG> {
     pub fn new(x_len: usize) -> Self {
         const {
-            assert!(K.saturating_pow(SEG as u32 / 2) >= (1<<30));
+            assert!(K.saturating_pow(SEG as u32 / 2) >= (1<<24));
             assert!(SEG <= 32);
         }
         let mut pow = K;
+        let mut height = 1;
         while pow < x_len {
             pow *= K;
+            height += 1;
         }
+        assert!(2*height-1 <= SEG);
         Self {
             trees: vec![RadixTree::new(); (pow-1)/(K-1)],
             x_len,
