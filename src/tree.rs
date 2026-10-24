@@ -620,7 +620,7 @@ impl<M: ac_library::Monoid> RadixTree<M> {
         self.tree.prod_prefix(key, key.len()*64)
     }
 
-    pub fn max_right(&self, left: &[usize], f: impl Fn(&M::S) -> bool) -> Option<Vec<usize>> {
+    pub fn max_right(&self, left: &[usize], f: impl FnMut(&M::S) -> bool) -> Option<Vec<usize>> {
         self.tree.max_right((left, left.len()*64), f).map(|(key, _)| key)
     }
 }
@@ -952,6 +952,7 @@ impl<M: ac_library::Monoid, const K: usize> ac_library::Monoid for PowMonoid<M, 
     }
 }
 
+// https://atcoder.jp/contests/abc467/submissions/80253836
 /// 2次元セグ木 \
 /// K, SEGは2冪だと速い
 pub struct SegRadixTree<M: ac_library::Monoid, const K: usize = 8, const SEG: usize = 16> {
