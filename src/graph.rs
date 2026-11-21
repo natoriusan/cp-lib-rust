@@ -4,6 +4,10 @@ pub trait ConstructGraph<T> {
 
     /// Constructs a directed graph from Vec of 0-indexed edge pairs
     fn directed_graph(&self, size: usize) -> Vec<Vec<T>>;
+    
+    fn rooted_tree(&self, root: usize) -> Vec<Vec<T>>;
+    
+    fn rooted_parents(&self, root: usize) -> Vec<T> where T: Default;
 }
 
 impl ConstructGraph<usize> for Vec<(usize, usize)> {
@@ -27,6 +31,42 @@ impl ConstructGraph<usize> for Vec<(usize, usize)> {
 
         graph
     }
+
+    fn rooted_tree(&self, root: usize) -> Vec<Vec<usize>> {
+        let graph = self.graph(self.len()+1);
+        
+        fn dfs(graph: &[Vec<usize>], tree: &mut [Vec<usize>], i: usize, prev: usize) {
+            for &j in &graph[i] {
+                if j != prev {
+                    tree[i].push(j);
+                    dfs(graph, tree, j, i);
+                }
+            }
+        }
+        
+        let mut tree = vec![vec![]; self.len()+1];
+        dfs(&graph, &mut tree, root, root);
+        
+        tree
+    }
+
+    fn rooted_parents(&self, root: usize) -> Vec<usize> {
+        let graph = self.graph(self.len()+1);
+
+        fn dfs(graph: &[Vec<usize>], parent: &mut [usize], i: usize, prev: usize) {
+            parent[i] = prev;
+            for &j in &graph[i] {
+                if j != prev {
+                    dfs(graph, parent, j, i);
+                }
+            }
+        }
+
+        let mut parent = vec![0; self.len()+1];
+        dfs(&graph, &mut parent, root, root);
+        
+        parent
+    }
 }
 
 impl<T: Copy> ConstructGraph<(usize, T)> for Vec<(usize, usize, T)> {
@@ -49,6 +89,43 @@ impl<T: Copy> ConstructGraph<(usize, T)> for Vec<(usize, usize, T)> {
         }
 
         graph
+    }
+
+    fn rooted_tree(&self, root: usize) -> Vec<Vec<(usize, T)>> {
+        let graph = self.graph(self.len()+1);
+
+        fn dfs<T: Copy>(graph: &[Vec<(usize, T)>], tree: &mut [Vec<(usize, T)>], i: usize, prev: usize) {
+            for &(j, w) in &graph[i] {
+                if j != prev {
+                    tree[i].push((j, w));
+                    dfs(graph, tree, j, i);
+                }
+            }
+        }
+
+        let mut tree = vec![vec![]; self.len()+1];
+        dfs(&graph, &mut tree, root, root);
+
+        tree
+    }
+
+    fn rooted_parents(&self, root: usize) -> Vec<(usize, T)> where (usize, T): Default {
+        let graph = self.graph(self.len()+1);
+
+        fn dfs<T: Copy>(graph: &[Vec<(usize, T)>], parent: &mut [(usize, T)], i: usize, prev: (usize, T)) {
+            parent[i] = prev;
+            for &(j, w) in &graph[i] {
+                if j != prev.0 {
+                    dfs(graph, parent, j, (i, w));
+                }
+            }
+        }
+
+        let mut parent = vec![<(usize, T)>::default(); self.len()+1];
+        let prev = (root, parent[0].1);
+        dfs(&graph, &mut parent, root, prev);
+
+        parent
     }
 }
 
